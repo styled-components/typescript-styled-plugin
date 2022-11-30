@@ -1,6 +1,6 @@
 {
-  "name": "typescript-styled-plugin",
-  "version": "0.18.2",
+  "name": "@styled/typescript-styled-plugin",
+  "version": "0.19.0",
   "description": "TypeScript language service plugin that adds IntelliSense for styled components",
   "keywords": [
     "TypeScript",
@@ -10,38 +10,38 @@
     "css"
   ],
   "main": "lib/index.js",
-  "author": "Microsoft",
+  "author": "Styled Components",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Microsoft/typescript-styled-plugin.git"
+    "url": "https://github.com/styled-components/typescript-styled-plugin.git"
   },
   "bugs": {
-    "url": "https://github.com/Microsoft/typescript-styled-plugin/issues"
+    "url": "https://github.com/styled-components/typescript-styled-plugin/issues"
   },
   "dependencies": {
-    "typescript-template-language-service-decorator": "^2.2.0",
-    "vscode-css-languageservice": "^5.1.4",
+    "typescript-template-language-service-decorator": "^2.3.1",
+    "vscode-css-languageservice": "^6.2.1",
     "vscode-emmet-helper": "^2.6.4",
-    "vscode-languageserver-textdocument": "^1.0.1",
-    "vscode-languageserver-types": "^3.16.0"
+    "vscode-languageserver-textdocument": "^1.0.7",
+    "vscode-languageserver-types": "^3.17.2"
   },
   "files": [
     "lib"
   ],
   "devDependencies": {
-    "@types/chai": "^4.1.4",
-    "@types/mocha": "^5.2.4",
-    "@types/node": "^16.4.2",
+    "@types/chai": "^4.3.4",
+    "@types/mocha": "^10.0.1",
+    "@types/node": "^18.11.9",
     "@typescript-eslint/eslint-plugin": "^5.6.0",
     "@typescript-eslint/parser": "^5.6.0",
-    "chai": "^4.1.2",
-    "eslint": "^8.4.0",
-    "eslint-plugin-prettier": "^4.0.0",
-    "glob": "^7.1.2",
-    "mocha": "^8.3.0",
-    "prettier": "^2.2.1",
-    "typescript": "^4.5.2"
+    "chai": "^4.3.7",
+    "eslint": "^8.28.0",
+    "eslint-plugin-prettier": "^4.2.1",
+    "glob": "^8.0.3",
+    "mocha": "^10.1.0",
+    "prettier": "^2.8.0",
+    "typescript": "^4.9.3"
   },
   "scripts": {
     "compile": "tsc -p .",

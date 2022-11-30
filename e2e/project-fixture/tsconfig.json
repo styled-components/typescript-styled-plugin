@@ -1,7 +1,7 @@
 {
     "compilerOptions": {
-        "target": "es2019",
+        "target": "ES2021",
         "module": "commonjs",
-        "plugins": [{ "name": "typescript-styled-plugin", "tags": ["css", "keyframes"] }]
+        "plugins": [{ "name": "@styled/typescript-styled-plugin", "tags": ["css", "keyframes"] }]
     }
 }
