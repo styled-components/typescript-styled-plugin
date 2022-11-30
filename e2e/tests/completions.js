@@ -19,7 +19,7 @@ describe('Completions', () => {
         return server.close().then(() => {
             const completionsResponse = getFirstResponseOfType('completions', server);
             assert.isTrue(completionsResponse.success);
-            assert.strictEqual(completionsResponse.body.length, 157);
+            assert.strictEqual(completionsResponse.body.length, 160);
             assert.isTrue(completionsResponse.body.some((item) => item.name === 'aliceblue'));
             assert.isTrue(completionsResponse.body.some((item) => item.name === 'rgba'));
         });
@@ -43,7 +43,7 @@ describe('Completions', () => {
         return server.close().then(() => {
             const completionsResponse = getFirstResponseOfType('completions', server);
             assert.isTrue(completionsResponse.success);
-            assert.strictEqual(completionsResponse.body.length, 157);
+            assert.strictEqual(completionsResponse.body.length, 160);
             assert.isTrue(completionsResponse.body.some((item) => item.name === 'aliceblue'));
         });
     });
@@ -55,7 +55,7 @@ describe('Completions', () => {
         return server.close().then(() => {
             const completionsResponse = getFirstResponseOfType('completions', server);
             assert.isTrue(completionsResponse.success);
-            assert.strictEqual(completionsResponse.body.length, 157);
+            assert.strictEqual(completionsResponse.body.length, 160);
             assert.isTrue(completionsResponse.body.some((item) => item.name === 'aliceblue'));
         });
     });
@@ -78,7 +78,7 @@ describe('Completions', () => {
         return server.close().then(() => {
             const completionsResponse = getFirstResponseOfType('completions', server);
             assert.isTrue(completionsResponse.success);
-            assert.strictEqual(completionsResponse.body.length, 157);
+            assert.strictEqual(completionsResponse.body.length, 160);
             assert.isTrue(completionsResponse.body.some((item) => item.name === 'aliceblue'));
         });
     });
@@ -90,7 +90,7 @@ describe('Completions', () => {
         return server.close().then(() => {
             const completionsResponse = getFirstResponseOfType('completions', server);
             assert.isTrue(completionsResponse.success);
-            assert.strictEqual(completionsResponse.body.length, 157);
+            assert.strictEqual(completionsResponse.body.length, 160);
             assert.isTrue(completionsResponse.body.some((item) => item.name === 'aliceblue'));
         });
     });
@@ -102,7 +102,7 @@ describe('Completions', () => {
         return server.close().then(() => {
             const completionsResponse = getFirstResponseOfType('completions', server);
             assert.isTrue(completionsResponse.success);
-            assert.strictEqual(completionsResponse.body.length, 157);
+            assert.strictEqual(completionsResponse.body.length, 160);
             assert.isTrue(completionsResponse.body.some((item) => item.name === 'aliceblue'));
         });
     });
@@ -114,7 +114,7 @@ describe('Completions', () => {
         return server.close().then(() => {
             const completionsResponse = getFirstResponseOfType('completions', server);
             assert.isTrue(completionsResponse.success);
-            assert.strictEqual(completionsResponse.body.length, 157);
+            assert.strictEqual(completionsResponse.body.length, 160);
             assert.isTrue(completionsResponse.body.some((item) => item.name === 'aliceblue'));
         });
     });
@@ -181,7 +181,7 @@ describe('Completions', () => {
         return server.close().then(() => {
             const completionsResponse = getFirstResponseOfType('completions', server);
             assert.isTrue(completionsResponse.success);
-            assert.strictEqual(completionsResponse.body.length, 157);
+            assert.strictEqual(completionsResponse.body.length, 160);
             assert.isTrue(completionsResponse.body.some((item) => item.name === 'aliceblue'));
         });
     });
@@ -195,7 +195,7 @@ describe('Completions', () => {
         return server.close().then(() => {
             const completionsResponse = getFirstResponseOfType('completions', server);
             assert.isTrue(completionsResponse.success);
-            assert.strictEqual(completionsResponse.body.length, 157);
+            assert.strictEqual(completionsResponse.body.length, 160);
             assert.isTrue(completionsResponse.body.some((item) => item.name === 'aliceblue'));
         });
     });
@@ -207,7 +207,7 @@ describe('Completions', () => {
         return server.close().then(() => {
             const completionsResponse = getFirstResponseOfType('completions', server);
             assert.isTrue(completionsResponse.success);
-            assert.strictEqual(completionsResponse.body.length, 157);
+            assert.strictEqual(completionsResponse.body.length, 160);
             assert.isTrue(completionsResponse.body.some((item) => item.name === 'aliceblue'));
             assert.isTrue(completionsResponse.body.some((item) => item.name === 'rgba'));
         });
@@ -220,7 +220,7 @@ describe('Completions', () => {
         await server.close();
         const completionsResponse = getFirstResponseOfType('completions', server);
         assert.isTrue(completionsResponse.success);
-        assert.strictEqual(completionsResponse.body.length, 157);
+        assert.strictEqual(completionsResponse.body.length, 160);
         assert.isTrue(completionsResponse.body.some((item) => item.name === 'aliceblue'));
         assert.isTrue(completionsResponse.body.some((item) => item.name === 'rgba'));
     });
