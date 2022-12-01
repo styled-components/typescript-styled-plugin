@@ -15,9 +15,9 @@ jobs:
             - name: Checkout
               uses: actions/checkout@v2
             - name: Install Node.js
-              uses: actions/setup-node@v1
+              uses: actions/setup-node@v3
               with:
-                  node-version: 14.x
+                  node-version: 18
             - run: npm install
             - name: Linting
               run: npm run lint
@@ -28,9 +28,9 @@ jobs:
             - name: Checkout
               uses: actions/checkout@v2
             - name: Install Node.js
-              uses: actions/setup-node@v1
+              uses: actions/setup-node@v3
               with:
-                  node-version: 14.x
+                  node-version: 18
             - run: npm install
             - name: Compiling
               run: npm run compile
@@ -41,9 +41,9 @@ jobs:
             - name: Checkout
               uses: actions/checkout@v2
             - name: Install Node.js
-              uses: actions/setup-node@v1
+              uses: actions/setup-node@v3
               with:
-                  node-version: 14.x
+                  node-version: 18
             - run: npm install
             - name: Compiling
               run: npm run compile
@@ -55,9 +55,9 @@ jobs:
             - name: Checkout
               uses: actions/checkout@v2
             - name: Install Node.js
-              uses: actions/setup-node@v1
+              uses: actions/setup-node@v3
               with:
-                  node-version: 14.x
+                  node-version: 18
             - run: npm install
             - run: npm install
               working-directory: ./e2e

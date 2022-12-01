@@ -9,13 +9,10 @@ import { getSubstitutions } from './_substituter';
 import { StyledVirtualDocumentFactory } from './_virtual-document-provider';
 
 export class StyledPlugin {
-
     private _logger?: LanguageServiceLogger;
     private readonly _configManager = new ConfigurationManager();
 
-    public constructor(
-        private readonly typescript: typeof ts
-    ) { }
+    public constructor(private readonly typescript: typeof ts) {}
 
     public create(info: ts.server.PluginCreateInfo): ts.LanguageService {
         this._logger = new LanguageServiceLogger(info);
@@ -32,9 +29,15 @@ export class StyledPlugin {
             this.typescript,
             info.languageService,
             info.project,
-            new StyledTemplateLanguageService(this.typescript, this._configManager, new StyledVirtualDocumentFactory(), this._logger),
+            new StyledTemplateLanguageService(
+                this.typescript,
+                this._configManager,
+                new StyledVirtualDocumentFactory(),
+                this._logger
+            ),
             getTemplateSettings(this._configManager),
-            { logger: this._logger });
+            { logger: this._logger }
+        );
     }
 
     public onConfigurationChanged(config: any) {
@@ -47,7 +50,9 @@ export class StyledPlugin {
 
 export function getTemplateSettings(configManager: ConfigurationManager): TemplateSettings {
     return {
-        get tags() { return configManager.config.tags; },
+        get tags() {
+            return configManager.config.tags;
+        },
         enableForStringWithSubstitutions: true,
         getSubstitutions(templateString, spans): string {
             return getSubstitutions(templateString, spans);

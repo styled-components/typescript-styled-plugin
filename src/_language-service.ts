@@ -5,35 +5,30 @@
 
 import { Logger, TemplateContext, TemplateLanguageService } from 'typescript-template-language-service-decorator';
 import * as ts from 'typescript/lib/tsserverlibrary';
-import { getCSSLanguageService, getSCSSLanguageService, LanguageService, FoldingRange } from 'vscode-css-languageservice';
-import { doComplete as emmetDoComplete } from 'vscode-emmet-helper';
+import {
+    getCSSLanguageService,
+    getSCSSLanguageService,
+    LanguageService,
+    FoldingRange,
+} from 'vscode-css-languageservice';
+import { doComplete as emmetDoComplete } from '@vscode/emmet-helper';
 import * as vscode from 'vscode-languageserver-types';
 import * as config from './_config';
 import { ConfigurationManager } from './_configuration';
 import { VirtualDocumentProvider } from './_virtual-document-provider';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 
-
 const cssErrorCode = 9999;
 
-function arePositionsEqual(
-    left: ts.LineAndCharacter,
-    right: ts.LineAndCharacter
-): boolean {
+function arePositionsEqual(left: ts.LineAndCharacter, right: ts.LineAndCharacter): boolean {
     return left.line === right.line && left.character === right.character;
 }
 
-function isAfter(
-    left: vscode.Position,
-    right: vscode.Position
-): boolean {
+function isAfter(left: vscode.Position, right: vscode.Position): boolean {
     return right.line > left.line || (right.line === left.line && right.character >= left.character);
 }
 
-function overlaps(
-    a: vscode.Range,
-    b: vscode.Range
-): boolean {
+function overlaps(a: vscode.Range, b: vscode.Range): boolean {
     return !isAfter(a.end, b.start) && !isAfter(b.end, a.start);
 }
 
@@ -48,14 +43,13 @@ class CompletionsCache {
     private _cachedCompletionsContent?: string;
     private _completions?: vscode.CompletionList;
 
-    public getCached(
-        context: TemplateContext,
-        position: ts.LineAndCharacter
-    ): vscode.CompletionList | undefined {
-        if (this._completions
-            && context.fileName === this._cachedCompletionsFile
-            && this._cachedCompletionsPosition && arePositionsEqual(position, this._cachedCompletionsPosition)
-            && context.text === this._cachedCompletionsContent
+    public getCached(context: TemplateContext, position: ts.LineAndCharacter): vscode.CompletionList | undefined {
+        if (
+            this._completions &&
+            context.fileName === this._cachedCompletionsFile &&
+            this._cachedCompletionsPosition &&
+            arePositionsEqual(position, this._cachedCompletionsPosition) &&
+            context.text === this._cachedCompletionsContent
         ) {
             return this._completions;
         }
@@ -63,11 +57,7 @@ class CompletionsCache {
         return undefined;
     }
 
-    public updateCached(
-        context: TemplateContext,
-        position: ts.LineAndCharacter,
-        completions: vscode.CompletionList
-    ) {
+    public updateCached(context: TemplateContext, position: ts.LineAndCharacter, completions: vscode.CompletionList) {
         this._cachedCompletionsFile = context.fileName;
         this._cachedCompletionsPosition = position;
         this._cachedCompletionsContent = context.text;
@@ -127,7 +117,7 @@ export class StyledTemplateLanguageService implements TemplateLanguageService {
         position: ts.LineAndCharacter,
         name: string
     ): ts.CompletionEntryDetails {
-        const item = this.getCompletionItems(context, position).items.find(x => x.label === name);
+        const item = this.getCompletionItems(context, position).items.find((x) => x.label === name);
         if (!item) {
             return {
                 name,
@@ -141,29 +131,29 @@ export class StyledTemplateLanguageService implements TemplateLanguageService {
         return translateCompletionItemsToCompletionEntryDetails(this.typescript, item);
     }
 
-    public getQuickInfoAtPosition(
-        context: TemplateContext,
-        position: ts.LineAndCharacter
-    ): ts.QuickInfo | undefined {
+    public getQuickInfoAtPosition(context: TemplateContext, position: ts.LineAndCharacter): ts.QuickInfo | undefined {
         const doc = this.virtualDocumentFactory.createVirtualDocument(context);
         const stylesheet = this.scssLanguageService.parseStylesheet(doc);
-        const hover = this.scssLanguageService.doHover(doc, this.virtualDocumentFactory.toVirtualDocPosition(position), stylesheet);
+        const hover = this.scssLanguageService.doHover(
+            doc,
+            this.virtualDocumentFactory.toVirtualDocPosition(position),
+            stylesheet
+        );
         if (hover) {
             return this.translateHover(hover, this.virtualDocumentFactory.toVirtualDocPosition(position), context);
         }
         return undefined;
     }
 
-    public getSemanticDiagnostics(
-        context: TemplateContext
-    ): ts.Diagnostic[] {
+    public getSemanticDiagnostics(context: TemplateContext): ts.Diagnostic[] {
         const doc = this.virtualDocumentFactory.createVirtualDocument(context);
         const stylesheet = this.scssLanguageService.parseStylesheet(doc);
         return this.translateDiagnostics(
             this.scssLanguageService.doValidation(doc, stylesheet),
             doc,
             context,
-            context.text).filter(x => !!x) as ts.Diagnostic[];
+            context.text
+        ).filter((x) => !!x) as ts.Diagnostic[];
     }
 
     public getSupportedCodeFixes(): number[] {
@@ -173,28 +163,28 @@ export class StyledTemplateLanguageService implements TemplateLanguageService {
     public getCodeFixesAtPosition(
         context: TemplateContext,
         start: number,
-        end: number,
+        end: number
         // _errorCodes: number[],
         // _format: ts.FormatCodeSettings
     ): ts.CodeAction[] {
         const doc = this.virtualDocumentFactory.createVirtualDocument(context);
         const stylesheet = this.scssLanguageService.parseStylesheet(doc);
         const range = this.toVsRange(context, start, end);
-        const diagnostics = this.scssLanguageService.doValidation(doc, stylesheet)
-            .filter(diagnostic => overlaps(diagnostic.range, range));
+        const diagnostics = this.scssLanguageService
+            .doValidation(doc, stylesheet)
+            .filter((diagnostic) => overlaps(diagnostic.range, range));
 
         return this.translateCodeActions(
             context,
-            this.scssLanguageService.doCodeActions(doc, range, { diagnostics }, stylesheet));
+            this.scssLanguageService.doCodeActions(doc, range, { diagnostics }, stylesheet)
+        );
     }
 
-    public getOutliningSpans(
-        context: TemplateContext
-    ): ts.OutliningSpan[] {
+    public getOutliningSpans(context: TemplateContext): ts.OutliningSpan[] {
         const doc = this.virtualDocumentFactory.createVirtualDocument(context);
         const ranges = this.scssLanguageService.getFoldingRanges(doc);
         return ranges
-            .filter(range => {
+            .filter((range) => {
                 // Filter out ranges outside on last line
                 const end = context.toOffset({
                     line: range.endLine,
@@ -202,24 +192,17 @@ export class StyledTemplateLanguageService implements TemplateLanguageService {
                 });
                 return end < context.text.length;
             })
-            .map(range => this.translateOutliningSpan(context, range));
+            .map((range) => this.translateOutliningSpan(context, range));
     }
 
-    private toVsRange(
-        context: TemplateContext,
-        start: number,
-        end: number
-    ): vscode.Range {
+    private toVsRange(context: TemplateContext, start: number, end: number): vscode.Range {
         return {
             start: this.virtualDocumentFactory.toVirtualDocPosition(context.toPosition(start)),
             end: this.virtualDocumentFactory.toVirtualDocPosition(context.toPosition(end)),
         };
     }
 
-    private getCompletionItems(
-        context: TemplateContext,
-        position: ts.LineAndCharacter
-    ): vscode.CompletionList {
+    private getCompletionItems(context: TemplateContext, position: ts.LineAndCharacter): vscode.CompletionList {
         const cached = this._completionsCache.getCached(context, position);
         const completions: vscode.CompletionList = {
             isIncomplete: false,
@@ -246,9 +229,12 @@ export class StyledTemplateLanguageService implements TemplateLanguageService {
         const virtualPosition = this.virtualDocumentFactory.toVirtualDocPosition(position);
         const stylesheet = this.scssLanguageService.parseStylesheet(doc);
         this.cssLanguageService.setCompletionParticipants([]);
-        const emmetResults = emmetDoComplete(doc, virtualPosition, 'css', this.configurationManager.config.emmet) || emptyCompletionList;
-        const completionsCss = this.cssLanguageService.doComplete(doc, virtualPosition, stylesheet) || emptyCompletionList;
-        const completionsScss = this.scssLanguageService.doComplete(doc, virtualPosition, stylesheet) || emptyCompletionList;
+        const emmetResults =
+            emmetDoComplete(doc, virtualPosition, 'css', this.configurationManager.config.emmet) || emptyCompletionList;
+        const completionsCss =
+            this.cssLanguageService.doComplete(doc, virtualPosition, stylesheet) || emptyCompletionList;
+        const completionsScss =
+            this.scssLanguageService.doComplete(doc, virtualPosition, stylesheet) || emptyCompletionList;
         completionsScss.items = filterScssCompletionItems(completionsScss.items);
 
         completions.items = [...completionsCss.items, ...completionsScss.items];
@@ -267,8 +253,7 @@ export class StyledTemplateLanguageService implements TemplateLanguageService {
         content: string
     ) {
         const sourceFile = context.node.getSourceFile();
-        return diagnostics.map(diag =>
-            this.translateDiagnostic(diag, sourceFile, doc, context, content));
+        return diagnostics.map((diag) => this.translateDiagnostic(diag, sourceFile, doc, context, content));
     }
 
     private translateDiagnostic(
@@ -279,15 +264,17 @@ export class StyledTemplateLanguageService implements TemplateLanguageService {
         content: string
     ): ts.Diagnostic | undefined {
         // Make sure returned error is within the real document
-        if (diagnostic.range.start.line === 0
-            || diagnostic.range.start.line > doc.lineCount
-            || diagnostic.range.start.character >= content.length
+        if (
+            diagnostic.range.start.line === 0 ||
+            diagnostic.range.start.line > doc.lineCount ||
+            diagnostic.range.start.character >= content.length
         ) {
             return undefined;
         }
 
         const start = context.toOffset(this.virtualDocumentFactory.fromVirtualDocPosition(diagnostic.range.start));
-        const length = context.toOffset(this.virtualDocumentFactory.fromVirtualDocPosition(diagnostic.range.end)) - start;
+        const length =
+            context.toOffset(this.virtualDocumentFactory.fromVirtualDocPosition(diagnostic.range.end)) - start;
         const code = typeof diagnostic.code === 'number' ? diagnostic.code : cssErrorCode;
         return {
             code,
@@ -300,11 +287,7 @@ export class StyledTemplateLanguageService implements TemplateLanguageService {
         };
     }
 
-    private translateHover(
-        hover: vscode.Hover,
-        position: ts.LineAndCharacter,
-        context: TemplateContext
-    ): ts.QuickInfo {
+    private translateHover(hover: vscode.Hover, position: ts.LineAndCharacter, context: TemplateContext): ts.QuickInfo {
         const contents: ts.SymbolDisplayPart[] = [];
         const convertPart = (hoverContents: typeof hover.contents) => {
             if (typeof hoverContents === 'string') {
@@ -316,13 +299,17 @@ export class StyledTemplateLanguageService implements TemplateLanguageService {
             }
         };
         convertPart(hover.contents);
-        const start = context.toOffset(this.virtualDocumentFactory.fromVirtualDocPosition(hover.range ? hover.range.start : position));
+        const start = context.toOffset(
+            this.virtualDocumentFactory.fromVirtualDocPosition(hover.range ? hover.range.start : position)
+        );
         return {
             kind: this.typescript.ScriptElementKind.unknown,
             kindModifiers: '',
             textSpan: {
                 start,
-                length: hover.range ? context.toOffset(this.virtualDocumentFactory.fromVirtualDocPosition(hover.range.end)) - start : 1,
+                length: hover.range
+                    ? context.toOffset(this.virtualDocumentFactory.fromVirtualDocPosition(hover.range.end)) - start
+                    : 1,
             },
             displayParts: [],
             documentation: contents,
@@ -330,51 +317,54 @@ export class StyledTemplateLanguageService implements TemplateLanguageService {
         };
     }
 
-    private translateCodeActions(
-        context: TemplateContext,
-        codeActions: vscode.Command[]
-    ): ts.CodeAction[] {
+    private translateCodeActions(context: TemplateContext, codeActions: vscode.Command[]): ts.CodeAction[] {
         const actions: ts.CodeAction[] = [];
         for (const vsAction of codeActions) {
             if (vsAction.command !== '_css.applyCodeAction') {
                 continue;
             }
 
-            const edits = vsAction.arguments && vsAction.arguments[2] as vscode.TextEdit[];
+            const edits = vsAction.arguments && (vsAction.arguments[2] as vscode.TextEdit[]);
             if (edits) {
                 actions.push({
                     description: vsAction.title,
-                    changes: edits.map(edit => this.translateTextEditToFileTextChange(context, edit)),
+                    changes: edits.map((edit) => this.translateTextEditToFileTextChange(context, edit)),
                 });
             }
         }
         return actions;
     }
 
-    private translateTextEditToFileTextChange(
-        context: TemplateContext,
-        textEdit: vscode.TextEdit
-    ): ts.FileTextChanges {
+    private translateTextEditToFileTextChange(context: TemplateContext, textEdit: vscode.TextEdit): ts.FileTextChanges {
         const start = context.toOffset(this.virtualDocumentFactory.fromVirtualDocPosition(textEdit.range.start));
         const end = context.toOffset(this.virtualDocumentFactory.fromVirtualDocPosition(textEdit.range.end));
         return {
             fileName: context.fileName,
-            textChanges: [{
-                newText: textEdit.newText,
-                span: {
-                    start,
-                    length: end - start,
+            textChanges: [
+                {
+                    newText: textEdit.newText,
+                    span: {
+                        start,
+                        length: end - start,
+                    },
                 },
-            }],
+            ],
         };
     }
 
-    private translateOutliningSpan(
-        context: TemplateContext,
-        range: FoldingRange
-    ): ts.OutliningSpan {
-        const startOffset = context.toOffset(this.virtualDocumentFactory.fromVirtualDocPosition({ line: range.startLine, character: range.startCharacter || 0 }));
-        const endOffset = context.toOffset(this.virtualDocumentFactory.fromVirtualDocPosition({ line: range.endLine, character: range.endCharacter || 0 }));
+    private translateOutliningSpan(context: TemplateContext, range: FoldingRange): ts.OutliningSpan {
+        const startOffset = context.toOffset(
+            this.virtualDocumentFactory.fromVirtualDocPosition({
+                line: range.startLine,
+                character: range.startCharacter || 0,
+            })
+        );
+        const endOffset = context.toOffset(
+            this.virtualDocumentFactory.fromVirtualDocPosition({
+                line: range.endLine,
+                character: range.endCharacter || 0,
+            })
+        );
         const span = {
             start: startOffset,
             length: endOffset - startOffset,
@@ -390,10 +380,8 @@ export class StyledTemplateLanguageService implements TemplateLanguageService {
     }
 }
 
-function filterScssCompletionItems(
-    items: vscode.CompletionItem[]
-): vscode.CompletionItem[] {
-    return items.filter(item => (item.kind === vscode.CompletionItemKind.Function && item.label.substr(0, 1) === ':'));
+function filterScssCompletionItems(items: vscode.CompletionItem[]): vscode.CompletionItem[] {
+    return items.filter((item) => item.kind === vscode.CompletionItemKind.Function && item.label.substr(0, 1) === ':');
 }
 
 function translateCompletionItemsToCompletionInfo(
@@ -409,7 +397,7 @@ function translateCompletionItemsToCompletionInfo(
         isGlobalCompletion: false,
         isMemberCompletion: false,
         isNewIdentifierLocation: false,
-        entries: items.items.map(x => translateCompetionEntry(typescript, x, doc, wrapper)),
+        entries: items.items.map((x) => translateCompetionEntry(typescript, x, doc, wrapper)),
     };
 }
 
@@ -446,10 +434,7 @@ function translateCompetionEntry(
     };
 }
 
-function translateCompletionItemKind(
-    typescript: typeof ts,
-    kind: vscode.CompletionItemKind
-): ts.ScriptElementKind {
+function translateCompletionItemKind(typescript: typeof ts, kind: vscode.CompletionItemKind): ts.ScriptElementKind {
     switch (kind) {
         case vscode.CompletionItemKind.Method:
             return typescript.ScriptElementKind.memberFunctionElement;
@@ -513,14 +498,14 @@ function translateSeverity(
     }
 }
 
-function toDisplayParts(
-    text: string | vscode.MarkupContent | undefined
-): ts.SymbolDisplayPart[] {
+function toDisplayParts(text: string | vscode.MarkupContent | undefined): ts.SymbolDisplayPart[] {
     if (!text) {
         return [];
     }
-    return [{
-        kind: 'text',
-        text: typeof text === 'string' ? text : text.value,
-    }];
+    return [
+        {
+            kind: 'text',
+            text: typeof text === 'string' ? text : text.value,
+        },
+    ];
 }

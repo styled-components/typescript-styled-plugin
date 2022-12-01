@@ -1,7 +1,8 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 import { TemplateContext } from 'typescript-template-language-service-decorator';
-import {TextDocument, Position} from 'vscode-languageserver-textdocument';
+import { TextDocument, Position } from 'vscode-languageserver-textdocument';
+import * as ts from 'typescript/lib/tsserverlibrary';
 
 /**
  * Handles mapping between template contents to virtual documents.
@@ -25,9 +26,7 @@ export class StyledVirtualDocumentFactory implements VirtualDocumentProvider {
     private static readonly wrapperPreRoot = ':root{\n';
     private static readonly wrapperPreKeyframes = '@keyframes custom {\n';
 
-    public createVirtualDocument(
-        context: TemplateContext
-    ): TextDocument {
+    public createVirtualDocument(context: TemplateContext): TextDocument {
         const contents = `${this.getVirtualDocumentWrapper(context)}${context.text}\n}`;
         return {
             uri: 'untitled://embedded.scss',
@@ -70,6 +69,8 @@ export class StyledVirtualDocumentFactory implements VirtualDocumentProvider {
 
     public getVirtualDocumentWrapper(context: TemplateContext): string {
         const tag = (context.node.parent as ts.Node & { tag: any })?.tag?.escapedText;
-        return tag === 'keyframes' ? StyledVirtualDocumentFactory.wrapperPreKeyframes : StyledVirtualDocumentFactory.wrapperPreRoot;
+        return tag === 'keyframes'
+            ? StyledVirtualDocumentFactory.wrapperPreKeyframes
+            : StyledVirtualDocumentFactory.wrapperPreRoot;
     }
 }
