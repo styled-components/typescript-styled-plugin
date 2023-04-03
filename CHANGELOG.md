@@ -1,5 +1,9 @@
 # Changelog
 
+### 1.0.0 - April 3, 2023
+
+-   Fix upstream issue with typescript-template-language-service-decorator
+
 ## 0.20.0 - December 01, 2022
 
 -   Forked into @styled

@@ -1,6 +1,6 @@
 {
   "name": "@styled/typescript-styled-plugin",
-  "version": "0.20.0",
+  "version": "1.0.0",
   "description": "TypeScript language service plugin that adds IntelliSense for styled components",
   "keywords": [
     "TypeScript",
@@ -20,11 +20,11 @@
     "url": "https://github.com/styled-components/typescript-styled-plugin/issues"
   },
   "dependencies": {
-    "@vscode/emmet-helper": "^2.8.4",
-    "typescript-template-language-service-decorator": "^2.3.1",
-    "vscode-css-languageservice": "^6.2.1",
-    "vscode-languageserver-textdocument": "^1.0.7",
-    "vscode-languageserver-types": "^3.17.2"
+    "@vscode/emmet-helper": "^2.8.6",
+    "typescript-template-language-service-decorator": "^2.3.2",
+    "vscode-css-languageservice": "^6.2.4",
+    "vscode-languageserver-textdocument": "^1.0.8",
+    "vscode-languageserver-types": "^3.17.3"
   },
   "files": [
     "lib"
@@ -41,7 +41,7 @@
     "glob": "^8.0.3",
     "mocha": "^10.1.0",
     "prettier": "^2.8.0",
-    "typescript": "^4.9.3"
+    "typescript": "^5.0.3"
   },
   "scripts": {
     "compile": "tsc -p .",

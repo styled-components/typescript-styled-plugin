@@ -3,20 +3,20 @@
 //
 // Original code forked from https://github.com/Quramy/ts-graphql-plugin
 
+import { doComplete as emmetDoComplete } from '@vscode/emmet-helper';
 import { Logger, TemplateContext, TemplateLanguageService } from 'typescript-template-language-service-decorator';
 import * as ts from 'typescript/lib/tsserverlibrary';
 import {
+    FoldingRange,
+    LanguageService,
     getCSSLanguageService,
     getSCSSLanguageService,
-    LanguageService,
-    FoldingRange,
 } from 'vscode-css-languageservice';
-import { doComplete as emmetDoComplete } from '@vscode/emmet-helper';
+import { TextDocument } from 'vscode-languageserver-textdocument';
 import * as vscode from 'vscode-languageserver-types';
 import * as config from './_config';
 import { ConfigurationManager } from './_configuration';
 import { VirtualDocumentProvider } from './_virtual-document-provider';
-import { TextDocument } from 'vscode-languageserver-textdocument';
 
 const cssErrorCode = 9999;
 
