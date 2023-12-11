@@ -3,6 +3,7 @@
 ## 1.0.1 - December 11, 2023
 
 -   Add support for `@container` queries by updating the CSS language service
+-   Update TypeScript and other dependencies
 
 ## 1.0.0 - April 3, 2023
 
