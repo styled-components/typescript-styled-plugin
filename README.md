@@ -67,7 +67,7 @@ Finally add a `plugins` section to your [`tsconfig.json`](http://www.typescriptl
     "compilerOptions": {
         "plugins": [
             {
-                "name": "typescript-styled-plugin"
+                "name": "@styled/typescript-styled-plugin"
             }
         ]
     }
@@ -162,7 +162,7 @@ To disable error reporting, set `"validate": false` in the plugin configuration:
     "compilerOptions": {
         "plugins": [
             {
-                "name": "typescript-styled-plugin",
+                "name": "@styled/typescript-styled-plugin",
                 "validate": false
             }
         ]
@@ -177,7 +177,7 @@ You can also configure how errors are reported using linter settings.
     "compilerOptions": {
         "plugins": [
             {
-                "name": "typescript-styled-plugin",
+                "name": "@styled/typescript-styled-plugin",
                 "lint": {
                     "vendorPrefix": "error",
                     "zeroUnits": "ignore"
