@@ -1,0 +1,41 @@
+# Pullfrog (https://docs.pullfrog.com/getting-started#manual-workflow-setup) dispatches this
+# workflow against the default branch for reviews and mentions; it never runs from a pull
+# request's own copy, so a fork cannot change what it runs or which secrets it sees.
+name: Pullfrog
+run-name: ${{ inputs.name || github.workflow }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      prompt:
+        type: string
+        description: Agent prompt
+      name:
+        type: string
+        description: Run name
+
+permissions:
+  contents: read
+
+jobs:
+  pullfrog:
+    runs-on: ubuntu-24.04
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Run agent
+        uses: pullfrog/pullfrog@v0
+        with:
+          prompt: ${{ inputs.prompt }}
+        env:
+          # Provider keys stored as repository or organization secrets; unset ones are empty.
+          # Keys stored with `pullfrog secret set` or Pullfrog Router need no entry here.
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
