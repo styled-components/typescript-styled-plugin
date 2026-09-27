@@ -9,16 +9,20 @@ const DEFAULT_RESPONSE_TIMEOUT_MS = 30_000
 
 const responseTimeoutVariable = 'TSSERVER_RESPONSE_TIMEOUT_MS'
 
-function parsePositiveInteger(name: string, value: string | undefined): number | undefined {
+/** Node fires any timer delay above this after 1 ms instead, so a larger timeout would fail at once. */
+const MAX_TIMER_DELAY_MS = 2 ** 31 - 1
+
+export function parsePositiveInteger(name: string, value: string | undefined): number | undefined {
   if (value === undefined) {
     return undefined
   }
-  if (!/^[1-9]\d*$/.test(value)) {
+  const parsed = Number(value)
+  if (!/^[1-9]\d*$/.test(value) || parsed > MAX_TIMER_DELAY_MS) {
     throw new Error(
-      `${name} is "${value}", which is not a whole number of milliseconds above zero. Set it to a value such as 60000, or unset it to use ${DEFAULT_RESPONSE_TIMEOUT_MS}.`,
+      `${name} is "${value}", which is not a whole number of milliseconds from 1 to ${MAX_TIMER_DELAY_MS}. Set it to a value such as 60000, or unset it to use ${DEFAULT_RESPONSE_TIMEOUT_MS}.`,
     )
   }
-  return Number(value)
+  return parsed
 }
 
 export const responseTimeoutMs =

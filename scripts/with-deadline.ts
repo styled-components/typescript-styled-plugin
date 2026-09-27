@@ -30,6 +30,9 @@ import { killGroup } from './kill-group.ts'
 
 const DEADLINE_OVERRIDE_ENV_VAR = 'WITH_DEADLINE_MS'
 
+/** Node fires any timer delay above this after 1 ms instead, which would kill the run at once. */
+const MAX_TIMER_DELAY_MS = 2 ** 31 - 1
+
 function usageError(message: string): never {
   console.error(message)
   console.error(
@@ -42,11 +45,12 @@ function parseDeadlineMs(defaultArg: string): number {
   const override = process.env[DEADLINE_OVERRIDE_ENV_VAR]
   const source = override ?? defaultArg
   const value = Number(source)
-  if (!Number.isFinite(value) || value <= 0) {
+  if (!Number.isFinite(value) || value <= 0 || value > MAX_TIMER_DELAY_MS) {
+    const expected = `expected a number of milliseconds from 1 to ${MAX_TIMER_DELAY_MS}.`
     usageError(
       override === undefined
-        ? `Invalid deadline "${defaultArg}": expected a positive number of milliseconds.`
-        : `Invalid ${DEADLINE_OVERRIDE_ENV_VAR}="${override}": expected a positive number of milliseconds.`,
+        ? `Invalid deadline "${defaultArg}": ${expected}`
+        : `Invalid ${DEADLINE_OVERRIDE_ENV_VAR}="${override}": ${expected}`,
     )
   }
   return value
