@@ -1,427 +1,165 @@
 # TypeScript Styled Plugin
 
-TypeScript server plugin that adds intellisense to [styled component](https://styled-components.com) css strings
+Cross-editor TypeScript Server plugin for CSS IntelliSense in [styled-components](https://styled-components.com) template literals.
 
-![](documentation/preview.gif)
+![](docs/images/preview.gif)
 
 ![Build Status](https://github.com/styled-components/typescript-styled-plugin/actions/workflows/ci.yml/badge.svg)
 
-**Features**
+## Features
 
--   IntelliSense for CSS property names and values.
--   Syntax error reporting.
--   Quick fixes for misspelled property names.
+- IntelliSense for CSS property names and values.
+- Syntax error reporting.
+- Quick fixes for misspelled property names.
+- Hover information.
+- Folding.
+- Emmet completions.
 
-## Usage
+## Requirements
 
-This plugin requires TypeScript 2.4 or later. It can provide intellisense in both JavaScript and TypeScript files within any editor that uses TypeScript to power their language features. This includes [VS Code](https://code.visualstudio.com), [Sublime with the TypeScript plugin](https://github.com/Microsoft/TypeScript-Sublime-Plugin), [Atom with the TypeScript plugin](https://atom.io/packages/atom-typescript), [Visual Studio](https://www.visualstudio.com), and others.
+- TypeScript 5.0 or newer (6.x recommended) activates the plugin. Below that
+  floor the plugin logs a message and leaves the host's `LanguageService`
+  untouched instead of activating.
+- Node.js 14.21.3 or newer in the tsserver host. The plugin's package root is
+  CommonJS, loaded with tsserver's synchronous `require()`.
+
+The automated suite covers the standard Node.js tsserver path. An editor must
+use a compatible tsserver host and runtime; successful installation alone does
+not prove editor compatibility. See
+[docs/tsserver-host.md](docs/tsserver-host.md) for the verified version and
+loading details behind these requirements.
+
+Embedding the language service directly through
+`@styled/typescript-styled-plugin/api` instead of the tsserver plugin needs
+the same Node floor, for both `import()` and `require()`.
+
+## Quick Start
+
+Install the plugin alongside the workspace TypeScript SDK:
+
+```bash
+npm install --save-dev @styled/typescript-styled-plugin typescript@^6.0.3
+```
+
+```json
+{
+  "compilerOptions": {
+    "plugins": [
+      {
+        "name": "@styled/typescript-styled-plugin"
+      }
+    ]
+  }
+}
+```
+
+Configure the editor to use this workspace TypeScript SDK. See the
+[usage guide](docs/usage.md) for tag configuration, validation and lint
+properties, and Emmet completions.
+
+## Editor Integration
 
 ### With VS Code
 
-Just install the [VS Code Styled Components extension](https://github.com/styled-components/vscode-styled-components). This extension adds syntax highlighting and IntelliSense for styled components in JavaScript and TypeScript files.
+Install the [VS Code Styled Components extension](https://github.com/styled-components/vscode-styled-components).
+It bundles this plugin and works with VS Code's bundled TypeScript version
+without installing anything else. The extension depends on `^1.0.0`, so a new
+1.x release of this plugin reaches extension users the next time the
+extension rebuilds its dependencies; a new major version needs the extension
+to widen that range first (docs/tsserver-host.md, "Downstream").
 
-If you are using a [workspace version of TypeScript](<(https://code.visualstudio.com/Docs/languages/typescript#_using-newer-typescript-versions)>) however, you must manually install the plugin along side the version of TypeScript in your workspace:
+To use a specific plugin version, or a workspace TypeScript version instead of
+the one VS Code bundles, complete the [Quick Start](#quick-start), then run
+`Select TypeScript Version` in VS Code and choose the workspace version. See
+the [VS Code TypeScript documentation](https://code.visualstudio.com/docs/typescript/typescript-compiling#_using-newer-typescript-versions)
+for details on managing TypeScript versions. This setup path requires
+validation against the specific VS Code and workspace TypeScript versions in
+use.
 
-```bash
-npm install --save-dev @styled/typescript-styled-plugin typescript
-```
-
-Then add a `plugins` section to your [`tsconfig.json`](http://www.typescriptlang.org/docs/handbook/tsconfig-json.html) or [`jsconfig.json`](https://code.visualstudio.com/Docs/languages/javascript#_javascript-project-jsconfigjson)
-
-```json
-{
-    "compilerOptions": {
-        "plugins": [
-            {
-                "name": "@styled/typescript-styled-plugin"
-            }
-        ]
-    }
-}
-```
-
-Finally, run the `Select TypeScript version` command in VS Code to switch to use the workspace version of TypeScript for VS Code's JavaScript and TypeScript language support. You can find more information about managing typescript versions [in the VS Code documentation](https://code.visualstudio.com/Docs/languages/typescript#_using-newer-typescript-versions).
-
-### With Sublime
+### With Sublime Text
 
 This plugin works with the [Sublime TypeScript plugin](https://github.com/Microsoft/TypeScript-Sublime-Plugin).
+Complete the [Quick Start](#quick-start), then point Sublime at the workspace
+TypeScript version by setting
+[`typescript_tsdk`](https://github.com/Microsoft/TypeScript-Sublime-Plugin#note-using-different-versions-of-typescript):
 
-First install the plugin and a copy of TypeScript in your workspace:
+```json
+{
+  "typescript_tsdk": "<path to your project>/node_modules/typescript/lib"
+}
+```
+
+This setup path requires validation against the Sublime TypeScript plugin and
+its bundled Node runtime; that runtime must meet the requirements above.
+
+### With Neovim
+
+Neovim talks to tsserver through a language server that wraps it. Two of them
+load tsserver plugins without a `plugins` entry in `tsconfig.json`: install
+the plugin globally, then point the server at npm's global folder, which
+`npm root -g` prints.
 
 ```bash
-npm install --save-dev @styled/typescript-styled-plugin typescript
+npm install --global @styled/typescript-styled-plugin
+npm root -g
 ```
 
-And configure Sublime to use the workspace version of TypeScript by [setting the `typescript_tsdk`](https://github.com/Microsoft/TypeScript-Sublime-Plugin#note-using-different-versions-of-typescript) setting in Sublime:
+With [vtsls](https://github.com/yioneko/vtsls) and
+[nvim-lspconfig](https://github.com/neovim/nvim-lspconfig), list the plugin in
+`vtsls.tsserver.globalPlugins`, with `location` set to that folder:
 
-```json
-{
-    "typescript_tsdk": "/Users/matb/my-amazing-project/node_modules/typescript/lib"
-}
+```lua
+vim.lsp.config('vtsls', {
+  settings = {
+    vtsls = {
+      tsserver = {
+        globalPlugins = {
+          {
+            name = '@styled/typescript-styled-plugin',
+            location = '/usr/local/lib/node_modules', -- the output of `npm root -g`
+            enableForWorkspaceTypeScriptVersions = true,
+          },
+        },
+      },
+    },
+  },
+})
+vim.lsp.enable('vtsls')
 ```
 
-Finally add a `plugins` section to your [`tsconfig.json`](http://www.typescriptlang.org/docs/handbook/tsconfig-json.html) or [`jsconfig.json`](https://code.visualstudio.com/Docs/languages/javascript#_javascript-project-jsconfigjson) and restart Sublime.
+With [typescript-tools.nvim](https://github.com/pmizio/typescript-tools.nvim),
+list the plugin in `tsserver_plugins`; it finds npm's global folder on its
+own:
 
-```json
-{
-    "compilerOptions": {
-        "plugins": [
-            {
-                "name": "typescript-styled-plugin"
-            }
-        ]
-    }
-}
+```lua
+require('typescript-tools').setup({
+  settings = {
+    tsserver_plugins = { '@styled/typescript-styled-plugin' },
+  },
+})
 ```
+
+To change [plugin settings](docs/usage.md), add the plugin's entry to
+`compilerOptions.plugins` in `tsconfig.json` as in the
+[Quick Start](#quick-start); tsserver still finds the globally installed copy.
+To use a copy installed in the project instead, complete the Quick Start and
+have the server use the workspace TypeScript version (for vtsls, set
+`vtsls.autoUseWorkspaceTsdk` to `true`). The tsserver host must meet the
+requirements above.
 
 ### With Visual Studio
 
-This plugin works [Visual Studio 2022](https://www.visualstudio.com) using the TypeScript 4.9+ SDK.
-
-First install the plugin in your project:
-
-```bash
-npm install --save-dev @styled/typescript-styled-plugin
-```
-
-Then add a `plugins` section to your [`tsconfig.json`](http://www.typescriptlang.org/docs/handbook/tsconfig-json.html).
-
-```json
-{
-    "compilerOptions": {
-        "plugins": [
-            {
-                "name": "@styled/typescript-styled-plugin"
-            }
-        ]
-    }
-}
-```
-
-Then reload your project to make sure the plugin has been loaded properly. Note that `jsconfig.json` projects are currently not supported in VS.
-
-## Configuration
-
-### Tags
-
-This plugin adds styled component IntelliSense to any template literal [tagged](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Template_literals) with `styled`, `css`, `injectGlobal`, `keyframes` or `createGlobalStyle`:
-
-```js
-import styled from 'styled-components';
-
-styled.button`
-    color: blue;
-`;
-```
-
-You can enable IntelliSense for other tag names by configuring `"tags"`:
-
-```json
-{
-    "compilerOptions": {
-        "plugins": [
-            {
-                "name": "@styled/typescript-styled-plugin",
-                "tags": ["styled", "css", "sty"]
-            }
-        ]
-    }
-}
-```
-
-Now strings tagged with either `styled`, `css`, or `sty` will have styled component IntelliSense:
-
-```js
-import sty from 'styled-components';
-
-sty.button`
-    color: blue;
-`;
-```
-
-Tags also apply to methods on styled components. This is enabled for `extend` by default:
-
-```js
-import sty from 'styled-components';
-
-const BlueButton = sty.button`
-    color: blue;
-`;
-
-const MyFancyBlueButton = BlueButton.extend`
-    border: 10px solid hotpink;
-`;
-```
-
-### Linting
-
-To disable error reporting, set `"validate": false` in the plugin configuration:
-
-```json
-{
-    "compilerOptions": {
-        "plugins": [
-            {
-                "name": "typescript-styled-plugin",
-                "validate": false
-            }
-        ]
-    }
-}
-```
-
-You can also configure how errors are reported using linter settings.
-
-```json
-{
-    "compilerOptions": {
-        "plugins": [
-            {
-                "name": "typescript-styled-plugin",
-                "lint": {
-                    "vendorPrefix": "error",
-                    "zeroUnits": "ignore"
-                }
-            }
-        ]
-    }
-}
-```
-
-The following lint options are supported:
-
-#### validProperties
-
-```
-["property1", "property2", ....]
-```
-
-List of properties that are treated as valid.
-
-#### unknownProperties
-
-```
-"ignore" | "warning" | "error"
-```
-
-Should unknown properties show an error or warning? Default is `"warning"`.
-
-#### compatibleVendorPrefixes
-
-```
-"ignore" | "warning" | "error"
-```
-
-When using a vendor-specific prefix make sure to also include all other vendor-specific properties. Default is `"ignore"`.
-
-#### vendorPrefix
-
-```
-"ignore" | "warning" | "error"
-```
-
-When using a vendor-specific prefix also include the standard property. Default is `"warning"`.
-
-#### duplicateProperties
-
-```
-"ignore" | "warning" | "error"
-```
-
-Do not use duplicate style definitions. Default is `"ignore"`.
-
-#### emptyRules
-
-```
-"ignore" | "warning" | "error"
-```
-
-Do not use empty rulesets. Default is `"ignore"`.
-
-#### importStatement
-
-```
-"ignore" | "warning" | "error"
-```
-
-Import statements do not load in parallel. Default is `"ignore"`.
-
-#### boxModel
-
-```
-"ignore" | "warning" | "error"
-```
-
-Do not use width or height when using padding or border. Default is `"ignore"`.
-
-#### universalSelector
-
-```
-"ignore" | "warning" | "error"
-```
-
-The universal selector (\*) is known to be slow. Default is `"ignore"`.
-
-#### zeroUnits
-
-```
-"ignore" | "warning" | "error"
-```
-
-No unit for zero needed. Default is `"ignore"`.
-
-#### fontFaceProperties
-
-```
-"ignore" | "warning" | "error"
-```
-
-@font-face rule must define 'src' and 'font-family' properties. Default is `"warning"`.
-
-#### hexColorLength
-
-```
-"ignore" | "warning" | "error"
-```
-
-Hex colors must consist of three or six hex numbers. Default is `"error"`.
-
-#### argumentsInColorFunction
-
-```
-"ignore" | "warning" | "error"
-```
-
-Invalid number of parameters. Default is `"error"`.
-
-#### ieHack
-
-```
-"ignore" | "warning" | "error"
-```
-
-IE hacks are only necessary when supporting IE7 and older. Default is `"ignore"`.
-
-#### unknownVendorSpecificProperties
-
-```
-"ignore" | "warning" | "error"
-```
-
-Unknown vendor specific property. Default is `"ignore"`.
-
-#### propertyIgnoredDueToDisplay
-
-```
-"ignore" | "warning" | "error"
-```
-
-Property is ignored due to the display. E.g. with 'display: inline', the width, height, margin-top, margin-bottom, and float properties have no effect. Default is `"warning"`
-
-#### important
-
-```
-"ignore" | "warning" | "error"
-```
-
-Avoid using !important. It is an indication that the specificity of the entire CSS has gotten out of control and needs to be refactored. Default is `"ignore"`.
-
-#### float
-
-```
-"ignore" | "warning" | "error"
-```
-
-Avoid using 'float'. Floats lead to fragile CSS that is easy to break if one aspect of the layout changes. Default is `"ignore"`.
-
-#### idSelector
-
-```
-"ignore" | "warning" | "error"
-```
-
-Selectors should not contain IDs because these rules are too tightly coupled with the HTML. Default is `"ignore"`.
-
-### Emmet in completion list
-
-You can now see your Emmet abbreviations expanded and included in the completion list.
-An [upstream issue](https://github.com/Microsoft/TypeScript/issues/21999) with typescript blocks the Emmet entry in the completion list to get updated as you type.
-So for now you will have to press `Ctrl+Space` after typing out the abbreviation.
-
-The below settings which are in sync with general Emmet settings in VS Code control the expanded Emmet abbreviations in the auto-completion list.
-
-#### showExpandedAbbreviation
-
-```
-"always" | "never"
-```
-
-Controls whether or not expanded Emmet abbreviations should show up in the completion list
-
-#### showSuggestionsAsSnippets
-
-```
-`true` | `false`
-```
-
-If true, then Emmet suggestions will show up as snippets allowing you to order them as per editor.snippetSuggestions setting.
-
-#### preferences
-
-Preferences used to modify behavior of some actions and resolvers of Emmet.
-
-## Contributing
-
-To build the typescript-styled-plugin, you'll need [Git](https://git-scm.com/downloads) and [Node.js](https://nodejs.org/).
-
-First, [fork](https://help.github.com/articles/fork-a-repo/) the typescript-styled-plugin repo and clone your fork:
-
-```bash
-git clone https://github.com/YOUR_GITHUB_ACCOUNT_NAME/typescript-styled-plugin.git
-cd typescript-styled-plugin
-```
-
-Then install dev dependencies:
-
-```bash
-npm install
-```
-
-The plugin is written in [TypeScript](http://www.typescriptlang.org). The source code is in the `src/` directory with the compiled JavaScript output to the `lib/` directory. Kick off a build using the `compile` script:
-
-```bash
-npm run compile
-```
-
-switch to `e2` to install or update test dependencies:
-
-```bash
-(cd e2e && npm install)
-```
-
-and then navigate back to the project root and run the end to end tests with the `e2e` script:
-
-```bash
-cd ..
-npm run e2e
-```
-
-You can submit bug fixes and features through [pull requests](https://help.github.com/articles/about-pull-requests/). To get started, first checkout a new feature branch on your local repo:
-
-```bash
-git checkout -b my-awesome-new-feature-branch
-```
-
-Make the desired code changes, commit them, and then push the changes up to your forked repository:
-
-```bash
-git push origin my-awesome-new-feature-branch
-```
-
-Then [submit a pull request](https://help.github.com/articles/creating-a-pull-request/) against the Microsoft typescript-styled-plugin repository.
-
-Please also see our [Code of Conduct](CODE_OF_CONDUCT.md).
+This setup path requires validation against the installed Visual Studio
+TypeScript Server host and runtime. Complete the [Quick Start](#quick-start) in
+the project, then confirm Visual Studio loads the workspace TypeScript SDK. Its
+tsserver host must meet the requirements above. Visual Studio does not support
+`jsconfig.json` projects; use `tsconfig.json`.
+
+## Maintainers
+
+See the [maintenance guide](docs/maintenance.md) for local setup, scripts,
+testing, performance baselines, package validation, and pull request guidance.
 
 ## Credits
 
-Code originally forked from: https://github.com/Quramy/ts-graphql-plugin
+Originally forked from [Quramy/ts-graphql-plugin](https://github.com/Quramy/ts-graphql-plugin).
