@@ -661,7 +661,7 @@ function getSubstitution(context: {
         plainFill()
       )
     }
-    return fillPlaceholder(placeholderText, 'x')
+    return fillPlaceholder(placeholderText, SOLID_FILL)
   }
 
   /**
@@ -674,12 +674,12 @@ function getSubstitution(context: {
    */
   if (context.isPropertyNamePosition) {
     if (isCustomPropertyName(context.syntaxTextSinceBoundary)) {
-      return fillPlaceholder(placeholderText, 'x')
+      return fillPlaceholder(placeholderText, SOLID_FILL)
     }
     if (context.isJoinedToName) {
       return (
         wrapPlaceholder(placeholderText, { close: '}', open: '#{x' }) ??
-        fillPlaceholder(placeholderText, 'x')
+        fillPlaceholder(placeholderText, SOLID_FILL)
       )
     }
     return wrapPlaceholder(placeholderText, { open: '$a', padding: 'x' }) ?? plainFill()
@@ -694,7 +694,7 @@ function getSubstitution(context: {
    */
   if (context.isSelectorPosition) {
     return context.isJoinedToSelectorName
-      ? fillPlaceholder(placeholderText, 'x')
+      ? fillPlaceholder(placeholderText, SOLID_FILL)
       : (wrapPlaceholder(placeholderText, { open: '&' }) ?? plainFill())
   }
 
