@@ -1249,7 +1249,7 @@ describe('StyledTemplateLanguageService', () => {
     ],
     ['a custom property name', '--v-${\n  a\n}: 1px;\ncolr: red;'],
   ])(
-    'should report only the colr control for a multi-line placeholder in %s, against the real CSS language service',
+    'should report only the colr control for a placeholder in %s, against the real CSS language service',
     (_description, text) => {
       assertOnlyColrControl(text)
     },
