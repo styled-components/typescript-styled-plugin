@@ -802,6 +802,33 @@ function defineCompletionCheck({
   })
 }
 
+/**
+ * `ruleCount` rules, each holding a multi-line placeholder as a margin value, then `color:` on its
+ * own last line. Every placeholder loses its own line breaks in the substituted virtual document
+ * (docs/architecture.md, substitution invariants), unlike createLargeTemplate's completion cases
+ * above, which hold no placeholder at all: withTemplateLineBreaks must realign many lines here, so
+ * its early return (every template line already ends in "\n") never applies, unlike those cases.
+ */
+function createManyMultilinePlaceholdersTemplate(ruleCount: number): {
+  spans: TemplateSpan[]
+  text: string
+} {
+  const unit = `.rule- { margin: ${MULTI_LINE_PLACEHOLDER}; color: red; }\n`
+  const text = unit.repeat(ruleCount) + 'color:'
+  return {
+    spans: offsetsOf(text, MULTI_LINE_PLACEHOLDER).map((start) => ({
+      end: start + MULTI_LINE_PLACEHOLDER.length,
+      start,
+    })),
+    text,
+  }
+}
+
+const manyMultilinePlaceholdersContextForSize = cachedBySize((size) => {
+  const { spans, text } = createManyMultilinePlaceholdersTemplate(size)
+  return createTemplateContext(text, spans)
+})
+
 /** Inside the first rule's selector `.rule-0` of a diagnostics template. */
 const HOVER_POSITION: ts.LineAndCharacter = { character: 1, line: 0 }
 const HOVERED_SELECTOR = '.rule-0'
@@ -871,6 +898,21 @@ const checks: readonly ScalingCheck[] = [
     },
   }),
   ...completionCases.map(defineCompletionCheck),
+  defineCheck({
+    n: COMPLETIONS_CHECK_N,
+    name: 'completions on a large template with many multi-line placeholders',
+    run: (size) => completionsAtEnd(manyMultilinePlaceholdersContextForSize(size)),
+    verify(completions) {
+      const names = entryNames(completions)
+      if (names.includes('red')) {
+        return undefined
+      }
+      return {
+        expected: 'a "red" entry among the color value completions',
+        received: `${names.length} entries, first ${JSON.stringify(names.slice(0, 5))}`,
+      }
+    },
+  }),
   defineCheck({
     n: DIAGNOSTICS_TEMPLATE_CHECK_N,
     name: 'code fixes',

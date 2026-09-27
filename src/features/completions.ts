@@ -164,11 +164,7 @@ export class CompletionsFeature {
         this.scssLanguageService.doComplete(document, virtualPosition, stylesheet).items,
       ),
     ]
-    const atKeywordRange = findStatementAtKeywordRange(
-      text,
-      caretOffset,
-      this.virtualDocumentProvider.toVirtualDocOffset(0, context),
-    )
+    const atKeywordRange = findStatementAtKeywordRange(text, caretOffset, templateStart)
     if (atKeywordRange) {
       const labels = new Set(items.map((item) => item.label))
       const range = {
@@ -357,7 +353,7 @@ function startsWithAtKeyword(text: string, from: number, to: number): boolean {
  * follow the template's own lines (docs/architecture.md, Completions). `document` itself when every
  * template line already ends in "\n" there.
  */
-function withTemplateLineBreaks(
+export function withTemplateLineBreaks(
   document: TextDocument,
   { lineStarts }: TemplateLineMap,
   templateStart: number,
@@ -376,20 +372,7 @@ function withTemplateLineBreaks(
     return document
   }
   aligned += text.slice(cursor)
-  return {
-    getEOLCharacters: (line) => document.getEOLCharacters(line),
-    getLineRange: (line) => document.getLineRange(line),
-    getText: (range) =>
-      range ? aligned.slice(document.offsetAt(range.start), document.offsetAt(range.end)) : aligned,
-    languageId: document.languageId,
-    get lineCount() {
-      return document.lineCount
-    },
-    offsetAt: (position) => document.offsetAt(position),
-    positionAt: (offset) => document.positionAt(offset),
-    uri: document.uri,
-    version: document.version,
-  }
+  return TextDocument.create(document.uri, document.languageId, document.version, aligned)
 }
 
 /**
