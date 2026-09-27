@@ -1,0 +1,15 @@
+{
+  "name": "e2e",
+  "private": true,
+  "dependencies": {
+    "@styled/typescript-styled-plugin": "workspace:*",
+    "typescript": "~6.0.3"
+  },
+  "devDependencies": {
+    "typescript-5.5": "npm:typescript@5.5.4",
+    "typescript-5.9": "npm:typescript@5.9.3",
+    "typescript-current": "npm:typescript@6.0.3",
+    "typescript-legacy": "npm:typescript@4.9.5",
+    "typescript-minimum": "npm:typescript@5.0.4"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "noEmit": true,
+    "paths": {
+      "typescript/*": ["../../node_modules/typescript-current/*"]
+    },
+    "skipLibCheck": false,
+    "strict": true,
+    "types": []
+  },
+  "include": ["consumer-lib-api-default.mts"]
+}

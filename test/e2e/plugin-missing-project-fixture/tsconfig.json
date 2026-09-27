@@ -1,0 +1,6 @@
+{
+  "compilerOptions": {
+    "plugins": [{ "name": "missing-tsserver-plugin" }],
+    "target": "ES2021"
+  }
+}

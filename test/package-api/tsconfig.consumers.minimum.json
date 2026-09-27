@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.consumers.json",
+  "compilerOptions": {
+    "paths": {
+      "typescript/*": ["../../node_modules/typescript-minimum/*"]
+    }
+  }
+}

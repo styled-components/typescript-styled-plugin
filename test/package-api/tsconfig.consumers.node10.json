@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "ignoreDeprecations": "6.0",
+    "module": "commonjs",
+    "moduleResolution": "node10",
+    "noEmit": true,
+    "paths": {
+      "typescript/*": ["../../node_modules/typescript-current/*"]
+    },
+    "skipLibCheck": false,
+    "strict": true,
+    "types": []
+  },
+  "include": ["consumer-node10.cts"]
+}
