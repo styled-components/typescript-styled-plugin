@@ -1,0 +1,8 @@
+# LF in every checkout, whatever core.autocrlf says: the formatter check expects LF, and e2e
+# fixtures such as test/e2e/closed-file-project-fixture/unclosed.ts assert exact line and offset
+# positions against their bytes.
+* text=auto eol=lf
+
+*.gif binary
+*.jpg binary
+*.png binary

@@ -1,0 +1,74 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # Full history: scripts/changelog.cjs asks git which commits touched each changeset file,
+          # and a shallow checkout's tip commit has no parent, which reads as having added every
+          # file in the tree and credits whoever pushed last instead of whoever wrote the change.
+          fetch-depth: 0
+          # Safe with changesets/action's default push mode (push-with-git-cli: false, unset here):
+          # it pushes the version branch and any release tags through its own Octokit client,
+          # authenticated by the github-token input, not this checkout's persisted git credential.
+          persist-credentials: false
+
+      # Sets up Node.js without a registry-url: nothing in this job runs npm. @changesets/cli
+      # publishes through Yarn (package.json packageManager), and Yarn never reads the .npmrc
+      # that registry-url would write; it takes the publish registry from package.json
+      # publishConfig.
+      - uses: ./.github/actions/setup
+
+      # The same gate as a local `yarn verify`: formatting, lint, typecheck, unit, scaling, the
+      # packed artifact, e2e on the default TypeScript, and the package API and contents checks.
+      # A regression any of them catches never reaches the publish step below.
+      - name: Verify
+        run: yarn verify
+
+      - name: Create Release Pull Request or Publish
+        id: changesets
+        # Pinned to a commit, not a tag: this action can push commits and publish the package.
+        # v2.1.2, 2026-09-07 (github.com/changesets/action, "development branch ... compatible
+        # with Changesets v3"). The v1 line only supports Changesets v2 and uses different
+        # (camelCase) input names; this repository's @changesets/cli is 3.x.
+        uses: changesets/action@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
+        with:
+          create-github-releases: true
+          publish-script: yarn changeset-publish
+          version-script: yarn changeset-version
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # No NPM_TOKEN: publishing relies on npm trusted publishing (OIDC), configured on
+          # npmjs.com for this package against this repository and this workflow file (see
+          # docs/maintenance.md, "Releases"). `yarn npm publish` (invoked by `changeset-publish`
+          # through @changesets/cli 3.x's own package-manager detection) exchanges the id-token
+          # permission above for a short-lived npm token on its own whenever it runs under
+          # GitHub Actions. Yarn 4.10.0 added that exchange (yarnpkg/berry#6898) and 4.10.3
+          # fixed it for scoped packages such as this one (#6911), so 4.10.3 is the floor: any
+          # package.json packageManager pin at or above it keeps OIDC publishing working.
+          # Yarn's npmPublishProvenance setting, read from its YARN_-prefixed environment form:
+          # `yarn npm publish` signs a provenance statement linking the published tarball to this
+          # workflow run, through the same id-token permission. Yarn builds that statement before
+          # it contacts the registry and has no fallback, so publishing requires the id-token:
+          # write permission above and a runner that reaches Sigstore's Fulcio
+          # (https://fulcio.sigstore.dev) and Rekor (https://rekor.sigstore.dev). When either is
+          # down, the publish fails with nothing published; re-run this job once Sigstore recovers
+          # (docs/maintenance.md, "Releases").
+          YARN_NPM_PUBLISH_PROVENANCE: 'true'

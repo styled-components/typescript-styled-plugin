@@ -1,0 +1,23 @@
+{
+  "$schema": "https://unpkg.com/@changesets/config@3.0.0/schema.json",
+  "access": "public",
+  "baseBranch": "main",
+  "changelog": [
+    "../scripts/changelog.cjs",
+    {
+      "maintainers": [
+        "570070+quantizor@users.noreply.github.com",
+        "Evan Jacobs",
+        "ej@quantizor.dev",
+        "probablyup@gmail.com",
+        "quantizor"
+      ]
+    }
+  ],
+  "commit": false,
+  "fixed": [],
+  "format": "oxfmt",
+  "ignore": [],
+  "linked": [],
+  "updateInternalDependencies": "patch"
+}

@@ -1,0 +1,14 @@
+{
+  // A dedicated project rather than an entry in the root tsconfig.json's "include": these files run
+  // directly with `node --experimental-strip-types` as native ES modules ("type": "module" in
+  // package.json), which needs "module"/"moduleResolution": "nodenext" for `import.meta` and for
+  // resolving the "./changelog.cjs" import specifier against changelog.d.cts (Node's own extension
+  // convention: a ".cjs" import is described by a ".d.cts" declaration file, not ".d.ts"). The root
+  // tsconfig.json instead targets "module": "commonjs" for tsdown's dual-output build of src/.
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "module": "nodenext",
+    "moduleResolution": "nodenext"
+  },
+  "include": ["."]
+}

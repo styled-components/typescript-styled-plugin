@@ -1,13 +1,13 @@
 {
-    "compilerOptions": {
-        "module": "commonjs",
-        "target": "ES2019",
-        "outDir": "lib",
-        "rootDir": "src",
-        "strict": true,
-        "declaration": true,
-        "sourceMap": true,
-        "skipLibCheck": true
-    },
-    "exclude": ["lib", "e2e", "node_modules", "test-workspace"]
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "module": "commonjs",
+    "target": "ES2024",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": ["node", "vitest/globals"]
+  },
+  "include": ["src", "test/unit", "test/performance", "tsdown.config.ts"],
+  "exclude": ["lib", "node_modules", "test/e2e"]
 }
