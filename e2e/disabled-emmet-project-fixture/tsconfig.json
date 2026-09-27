@@ -1,9 +1,0 @@
-{
-  "compilerOptions": {
-    "target": "es2015",
-    "module": "commonjs",
-    "plugins": [
-      { "name": "@styled/typescript-styled-plugin", "tags": ["css"], "emmet": { "showExpandedAbbreviation": "never"} }
-    ]
-  }
-}

@@ -1,0 +1,11 @@
+{
+  "compilerOptions": {
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "noEmit": true,
+    "skipLibCheck": false,
+    "strict": true,
+    "types": ["node"]
+  },
+  "include": ["runtime.ts"]
+}

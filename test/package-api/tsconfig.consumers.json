@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "noEmit": true,
+    "skipLibCheck": false,
+    "strict": true,
+    "types": []
+  },
+  "include": [
+    "consumer-1.0.1-shape.cts",
+    "consumer-api.cts",
+    "consumer-lib-api-default.mts",
+    "consumer-root.ts",
+    "consumer.cts",
+    "consumer.ts"
+  ]
+}

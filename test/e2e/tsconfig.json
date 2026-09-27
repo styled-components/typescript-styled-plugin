@@ -1,0 +1,9 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "module": "preserve"
+  },
+  "include": ["fixture-paths.ts", "tsserver-fixture", "scenarios"],
+  // Replaces the base config's exclude, which lists test/e2e and would otherwise exclude every file here.
+  "exclude": []
+}
