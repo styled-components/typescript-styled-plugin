@@ -241,6 +241,10 @@ const cases: CompareCase[] = [
     'declare const props: { image: string }\nconst A = styled.div`background: url(${\n  props.image\n});`',
   ),
   diagnosticsCase(
+    'placeholder inside a url() after "#" with text after it',
+    'declare const id: string\nconst A = styled.div`fill: url(#${id}-grad);`',
+  ),
+  diagnosticsCase(
     'placeholder spanning a line break inside a quoted string',
     'declare const props: { label: string }\nconst A = styled.div`content: "${\n  props.label\n}";`',
   ),
