@@ -237,6 +237,22 @@ const cases: CompareCase[] = [
     'const A = styled.div`background: url(foo\\\nbar.png);\ncolor: red;`',
   ),
   diagnosticsCase(
+    'placeholder spanning a line break inside an unquoted url() argument',
+    'declare const props: { image: string }\nconst A = styled.div`background: url(${\n  props.image\n});`',
+  ),
+  diagnosticsCase(
+    'placeholder spanning a line break inside a quoted string',
+    'declare const props: { label: string }\nconst A = styled.div`content: "${\n  props.label\n}";`',
+  ),
+  diagnosticsCase(
+    'placeholder spanning a line break inside a line comment',
+    'declare const note: string\nconst A = styled.div`// ${\n  note\n} here\ncolor: red;`',
+  ),
+  diagnosticsCase(
+    'placeholder spanning a line break as an @media prelude',
+    'declare const query: string\nconst A = styled.div`@media ${\n  query\n} {\n  color: red;\n}`',
+  ),
+  diagnosticsCase(
     'property name placeholder before "&" on the same line',
     'declare const s: string\nconst A = styled.div`padding-${s}: 0; &:hover { color: red; }`',
   ),

@@ -333,6 +333,49 @@ function buildStatementPlaceholderCase(count: number): TextCase {
   })
 }
 
+const MULTI_LINE_PLACEHOLDER = '${\n  a\n}'
+const SOLID_MULTI_LINE_FILL = 'x'.repeat(MULTI_LINE_PLACEHOLDER.length)
+
+/** `count` copies of `unit`, each MULTI_LINE_PLACEHOLDER in it a span. */
+function repeatMultiLineUnit(count: number, unit: string, expectedUnit: string): TextCase {
+  const text = unit.repeat(count)
+  return {
+    expected: expectedUnit.repeat(count),
+    spans: offsetsOf(text, MULTI_LINE_PLACEHOLDER).map((start) => ({
+      end: start + MULTI_LINE_PLACEHOLDER.length,
+      start,
+    })),
+    text,
+  }
+}
+
+/**
+ * A multi-line placeholder inside a quoted string, then another inside an unquoted url() argument,
+ * repeated: every placeholder takes the solid fill, found by one walk of the spans against the
+ * runs, never a search per placeholder.
+ */
+function buildStringAndUrlMultilinePlaceholderCase(count: number): TextCase {
+  return repeatMultiLineUnit(
+    count,
+    `content: "${MULTI_LINE_PLACEHOLDER}"; background: url(${MULTI_LINE_PLACEHOLDER}); `,
+    `content: "${SOLID_MULTI_LINE_FILL}"; background: url(${SOLID_MULTI_LINE_FILL}); `,
+  )
+}
+
+/**
+ * A multi-line placeholder inside a quoted string, then one at code as a mixin on the same line
+ * (whitespace, where a solid fill would be x's), repeated: solid and classified placeholders
+ * alternate, so the walk of the spans against the runs must keep its place between them instead of
+ * starting over per placeholder.
+ */
+function buildStringAndCodeMultilinePlaceholderCase(count: number): TextCase {
+  return repeatMultiLineUnit(
+    count,
+    `content: "${MULTI_LINE_PLACEHOLDER}"; ${MULTI_LINE_PLACEHOLDER} `,
+    `content: "${SOLID_MULTI_LINE_FILL}"; ${' '.repeat(MULTI_LINE_PLACEHOLDER.length)} `,
+  )
+}
+
 interface TextCheckCase {
   readonly build: (count: number) => TextCase
   readonly label: string
@@ -505,6 +548,14 @@ const substitutionCases: readonly TextCheckCase[] = [
       return { ...textCase, spans: textCase.spans.toReversed() }
     },
     label: 'block-position placeholders, spans given in reverse order',
+  },
+  {
+    build: buildStringAndUrlMultilinePlaceholderCase,
+    label: 'multi-line placeholders inside strings and url() arguments',
+  },
+  {
+    build: buildStringAndCodeMultilinePlaceholderCase,
+    label: 'multi-line placeholders alternating between strings and code',
   },
 ]
 

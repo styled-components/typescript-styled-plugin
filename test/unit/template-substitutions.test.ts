@@ -110,54 +110,31 @@ describe('substituter', () => {
     )
   })
 
-  it('should preserve line breaks inside a multiline placeholder', () => {
-    const value = ['color: ${', '  color', '};'].join('\n')
-
-    assert.deepEqual(
-      getTemplateSubstitutions(value, [
-        { start: value.indexOf('${'), end: value.indexOf('}') + 1 },
-      ]),
-      ['color: xx', 'xxxxxxx', 'x;'].join('\n'),
-    )
-  })
-
-  it('should preserve CRLF line endings inside a multiline placeholder', () => {
-    const value = ['color: ${', '  color', '};'].join('\r\n')
-
-    assert.deepEqual(
-      getTemplateSubstitutions(value, [
-        { start: value.indexOf('${'), end: value.indexOf('}') + 1 },
-      ]),
-      ['color: xx', 'xxxxxxx', 'x;'].join('\r\n'),
-    )
-  })
-
+  /**
+   * At runtime the interpolated value holds none of the placeholder's source line breaks, so every
+   * fill writes over them too (docs/architecture.md, substitution invariants).
+   */
   it.each([
-    ['line separator', '\u2028'],
-    ['paragraph separator', '\u2029'],
-  ])('should preserve the Unicode %s inside a multiline placeholder', (_description, separator) => {
-    const value = `color: \${${separator}  color${separator}};`
+    ['a line feed', '\n', 'color: xxxxxxxxxxxx;'],
+    ['a CRLF', '\r\n', 'color: xxxxxxxxxxxxxx;'],
+    ['a carriage return', '\r', 'color: xxxxxxxxxxxx;'],
+    ['a line separator', '\u2028', 'color: xxxxxxxxxxxx;'],
+    ['a paragraph separator', '\u2029', 'color: xxxxxxxxxxxx;'],
+  ])(
+    'should fill %s inside a multi-line value placeholder with the fill character',
+    (_description, lineTerminator, expected) => {
+      const value = `color: \${${lineTerminator}  color${lineTerminator}};`
 
-    const result = getTemplateSubstitutions(value, [
-      { start: value.indexOf('${'), end: value.indexOf('}') + 1 },
-    ])
-
-    assert.strictEqual(result, `color: xx${separator}xxxxxxx${separator}x;`)
-    assert.strictEqual(result.length, value.length)
-  })
+      assert.strictEqual(performSubstitutions(value), expected)
+    },
+  )
 
   it('should substitute placeholders after a multiline placeholder in their own context', () => {
     const value = ['color: ${', '  color', '};', 'width: ${10}%;'].join('\n')
-    const firstStart = value.indexOf('${')
-    const firstEnd = value.indexOf('}') + 1
-    const secondStart = value.indexOf('${', firstEnd)
 
-    assert.deepEqual(
-      getTemplateSubstitutions(value, [
-        { start: firstStart, end: firstEnd },
-        { start: secondStart, end: value.indexOf('}', secondStart) + 1 },
-      ]),
-      ['color: xx', 'xxxxxxx', 'x;', 'width: 00000%;'].join('\n'),
+    assert.strictEqual(
+      performSubstitutions(value),
+      ['color: xxxxxxxxxxxx;', 'width: 00000%;'].join('\n'),
     )
   })
 
@@ -197,10 +174,13 @@ describe('substituter', () => {
     )
   })
 
-  it('should preserve CRLF line endings for dynamic declaration names and values (#25)', () => {
-    const value = ['${varName}: ${', '  value', '};'].join('\r\n')
+  it('should keep the CRLF after a multi-line value placeholder following a dynamic declaration name (#25)', () => {
+    const value = ['${varName}: ${', '  value', '};', 'color: red;'].join('\r\n')
 
-    assert.deepEqual(performSubstitutions(value), ['$axxxxxxxx: xx', 'xxxxxxx', 'x;'].join('\r\n'))
+    assert.deepEqual(
+      performSubstitutions(value),
+      ['$axxxxxxxx: xxxxxxxxxxxxxx;', 'color: red;'].join('\r\n'),
+    )
   })
 
   it('should bound syntax masking to the template text', () => {
@@ -340,28 +320,26 @@ describe('substituter', () => {
     )
   })
 
-  it('should keep every line terminator of a multi-line placeholder used as a mixin', () => {
-    /** The dummy declaration is written around the line break, which the parser reads as whitespace. */
+  it('should write the dummy declaration of a multi-line mixin placeholder over its line breaks', () => {
     const value = ['${', '    m', '};'].join('\n')
 
-    assert.strictEqual(performSubstitutions(value), '$a\n:0   \n ;')
+    assert.strictEqual(performSubstitutions(value), '$a:0      ;')
   })
 
-  it('should keep every line terminator of a multi-line placeholder used as a selector', () => {
+  it('should write the selector fill of a multi-line placeholder over its line breaks', () => {
     const value = ['${', '    B', '}:hover & {', '    color: red;', '}'].join('\n')
 
     assert.strictEqual(
       performSubstitutions(value),
-      ['& ', '     ', ' :hover & {', '    color: red;', '}'].join('\n'),
+      ['&         :hover & {', '    color: red;', '}'].join('\n'),
     )
   })
 
   it.each([
-    /** "000" stays on one line to read as a hex color, so it covers a line break among the first three characters. */
-    ['right after "${"', ['color: #${', '    x', '};'], 'color: #000     \n ;'],
-    ['after the first line', ['color: #${x', '  }', ';'], 'color: #000\n   \n;'],
+    ['right after "${"', ['color: #${', '    x', '};'], 'color: #000       ;'],
+    ['after the first line', ['color: #${x', '  }', ';'], 'color: #000    \n;'],
   ])(
-    'should keep the line terminators of a multi-line hex color placeholder broken %s past its "000"',
+    'should write the hex color fill of a multi-line placeholder broken %s over its line breaks',
     (_description, lines, expected) => {
       assert.strictEqual(performSubstitutions(lines.join('\n')), expected)
     },
@@ -624,10 +602,10 @@ describe('substituter', () => {
     assert.strictEqual(performSubstitutions(value), '#{x} b: 1px;')
   })
 
-  it('should keep the line terminators of a multi-line placeholder joined to a property name', () => {
+  it('should write the Sass interpolation of a multi-line placeholder joined to a property name over its line breaks', () => {
     const value = 'padding-${\n  s\n}: 4px;'
 
-    assert.strictEqual(performSubstitutions(value), 'padding-#{\nx  \n}: 4px;')
+    assert.strictEqual(performSubstitutions(value), 'padding-#{x    }: 4px;')
   })
 
   it('should x-fill a placeholder joined to a custom property name, before or after', () => {
@@ -725,10 +703,10 @@ describe('substituter', () => {
     },
   )
 
-  it('should keep the line terminators of a multi-line at-rule condition placeholder', () => {
+  it('should write the condition fill of a multi-line at-rule condition placeholder over its line breaks', () => {
     const value = '@media screen and ${\n  q\n} { color: red; }'
 
-    assert.strictEqual(performSubstitutions(value), '@media screen and (x\n   \n) { color: red; }')
+    assert.strictEqual(performSubstitutions(value), '@media screen and (x     ) { color: red; }')
   })
 
   it.each([
@@ -1033,11 +1011,14 @@ describe('substituter', () => {
   )
 
   it.each([
-    ['an unterminated block comment', 'a: 0 /* \n  ${m}', 'a: 0 /* \n      '],
-    ['an unterminated block comment, after a ";" in it', 'a: 0 /* ;\n  ${m}', 'a: 0 /* ;\n      '],
-  ])('should start a new line at a line break inside %s', (_description, value, expected) => {
-    assert.strictEqual(performSubstitutions(value), expected)
-  })
+    ['an unterminated block comment', 'a: 0 /* \n  ${m}', 'a: 0 /* \n  xxxx'],
+    ['an unterminated block comment, after a ";" in it', 'a: 0 /* ;\n  ${m}', 'a: 0 /* ;\n  xxxx'],
+  ])(
+    'should fill a placeholder on its own line inside %s with x',
+    (_description, value, expected) => {
+      assert.strictEqual(performSubstitutions(value), expected)
+    },
+  )
 
   it.each([
     ['a double-quoted string holding "{"', '${A}: "a{b";', '$axx: "a{b";'],
@@ -1163,6 +1144,85 @@ describe('substituter', () => {
     'should read a placeholder inside a url() after %s as part of the url, not a mixin',
     (_description, template, expected) => {
       assert.strictEqual(performSubstitutions(template), expected)
+    },
+  )
+
+  /**
+   * At runtime the interpolated value holds none of the placeholder's source line breaks, so one
+   * that starts inside a comment, string, or unquoted url() argument fills its whole length with
+   * "x", line terminators included, in the masked text as in the output (docs/architecture.md,
+   * substitution invariants).
+   */
+  it.each([
+    [
+      'an unquoted url() argument, across a line feed',
+      'background: url(${\n  x\n});',
+      'background: url(xxxxxxxx);',
+    ],
+    [
+      'an unquoted url() argument, across a CRLF',
+      'background: url(${\r\n  x\r\n});',
+      'background: url(xxxxxxxxxx);',
+    ],
+    [
+      'an unquoted url() argument, across a line separator',
+      'background: url(${\u2028  x\u2028});',
+      'background: url(xxxxxxxx);',
+    ],
+    [
+      'an unquoted url() argument, across a paragraph separator',
+      'background: url(${\u2029  x\u2029});',
+      'background: url(xxxxxxxx);',
+    ],
+    [
+      'a url-prefix() argument',
+      'background: url-prefix(${\n  x\n});',
+      'background: url-prefix(xxxxxxxx);',
+    ],
+    ['a url() argument after "#"', 'fill: url(#${\n  id\n});', 'fill: url(#xxxxxxxxx);'],
+    ['a url() argument after "#", on one line', 'fill: url(#${id});', 'fill: url(#xxxxx);'],
+    [
+      'a url() argument after its own line break',
+      'background: url(\n  ${\n  x\n}\n);',
+      'background: url(\n  xxxxxxxx\n);',
+    ],
+    ['a quoted url() argument', 'background: url("${\n  x\n}");', 'background: url("xxxxxxxx");'],
+    ['a double-quoted string', 'content: "${\n  x\n}";', 'content: "xxxxxxxx";'],
+    ['a single-quoted string', "content: '${\n  x\n}';", "content: 'xxxxxxxx';"],
+    [
+      'a string holding two placeholders',
+      'content: "${\n  a\n} ${\n  b\n}";',
+      'content: "xxxxxxxx xxxxxxxx";',
+    ],
+    [
+      'a string before a mixin on its line, which stays a mixin',
+      'content: "${\n  a\n}"; ${mixin}\ncolor: red;',
+      'content: "xxxxxxxx";         \ncolor: red;',
+    ],
+    ['a line comment', '// ${\n  a\n} note\ncolor: red;', '// xxxxxxxx note\ncolor: red;'],
+    ['a block comment', '/* ${\n  x\n} */\ncolor: red;', '/* xxxxxxxx */\ncolor: red;'],
+  ])(
+    'should fill a placeholder inside %s with x over its whole length (#13)',
+    (_description, value, expected) => {
+      assert.strictEqual(performSubstitutions(value), expected)
+    },
+  )
+
+  it.each([
+    [
+      'an escaped run, whose backslash may escape the placeholder itself',
+      '\\${\n  p\n}: 1px;',
+      '\\$axxxxxx: 1px;',
+    ],
+    [
+      'code, on a line of its own',
+      'a: b;\n${\n  m\n}\ncolor: red;',
+      'a: b;\n        \ncolor: red;',
+    ],
+  ])(
+    'should give a placeholder in %s its usual fill, not the solid fill',
+    (_description, value, expected) => {
+      assert.strictEqual(performSubstitutions(value), expected)
     },
   )
 

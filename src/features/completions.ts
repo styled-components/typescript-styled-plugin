@@ -140,9 +140,13 @@ export class CompletionsFeature {
       this.virtualDocumentSessionProvider.getParsedDocument(context)
     const virtualPosition = this.virtualDocumentProvider.toVirtualDocPosition(position)
     const configuration = this.getConfiguration()
+    const templateStart = this.virtualDocumentProvider.toVirtualDocOffset(0, context)
     const emmetItems =
-      this.emmetCompletionProvider.doComplete(document, virtualPosition, configuration.emmet)
-        ?.items ?? []
+      this.emmetCompletionProvider.doComplete(
+        withTemplateLineBreaks(document, lineMap, templateStart),
+        virtualPosition,
+        configuration.emmet,
+      )?.items ?? []
     const text = document.getText()
     const caretOffset = document.offsetAt(virtualPosition)
     const caretPlacement = findCaretPlacement(
@@ -345,6 +349,47 @@ function startsWithAtKeyword(text: string, from: number, to: number): boolean {
     index = commentEnd
   }
   return false
+}
+
+/**
+ * `document` with "\n" at the end of every template line, for Emmet, which reads the caret's line
+ * from the text between "\n" characters (`getCurrentLine`, @vscode/emmet-helper) while positions
+ * follow the template's own lines (docs/architecture.md, Completions). `document` itself when every
+ * template line already ends in "\n" there.
+ */
+function withTemplateLineBreaks(
+  document: TextDocument,
+  { lineStarts }: TemplateLineMap,
+  templateStart: number,
+): TextDocument {
+  const text = document.getText()
+  let aligned = ''
+  let cursor = 0
+  for (let line = 1; line < lineStarts.length; line++) {
+    const lineEnd = templateStart + lineStarts[line] - 1
+    if (text[lineEnd] !== '\n') {
+      aligned += `${text.slice(cursor, lineEnd)}\n`
+      cursor = lineEnd + 1
+    }
+  }
+  if (cursor === 0) {
+    return document
+  }
+  aligned += text.slice(cursor)
+  return {
+    getEOLCharacters: (line) => document.getEOLCharacters(line),
+    getLineRange: (line) => document.getLineRange(line),
+    getText: (range) =>
+      range ? aligned.slice(document.offsetAt(range.start), document.offsetAt(range.end)) : aligned,
+    languageId: document.languageId,
+    get lineCount() {
+      return document.lineCount
+    },
+    offsetAt: (position) => document.offsetAt(position),
+    positionAt: (offset) => document.positionAt(offset),
+    uri: document.uri,
+    version: document.version,
+  }
 }
 
 /**
