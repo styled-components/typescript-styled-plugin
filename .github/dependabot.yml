@@ -1,0 +1,36 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    # .github/workflows/pullfrog.yml is maintained by the Pullfrog installer, which asks for no
+    # edits, and pullfrog/pullfrog appears nowhere else. Its actions/checkout pin cannot be
+    # excluded the same way without also ignoring the checkout the other workflows use.
+    ignore:
+      - dependency-name: pullfrog/pullfrog
+  # Covers the yarn.lock at the root and, through the Yarn workspace it declares, test/e2e's
+  # own package.json (docs/maintenance.md, project layout).
+  # No cooldown key: Dependabot's default cooldown for version updates (3 days) already exceeds
+  # .yarnrc.yml's npmMinimalAgeGate (1440 minutes, one day), so a version Yarn would still hold
+  # back never gets a Dependabot pull request.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        patterns:
+          - '*'
+        update-types:
+          - minor
+          - patch
+    # TypeScript versions move only as a deliberate, reviewed change. The plain `typescript`
+    # dependency (package.json and test/e2e/package.json) compiles the package and runs the
+    # default e2e pass, so every update to it is ignored here. The e2e matrix's
+    # `npm:typescript@<version>` aliases in test/e2e/package.json need no entry: Dependabot's
+    # npm and Yarn parser skips `npm:` alias requirements, so it never proposes updates for them.
+    ignore:
+      - dependency-name: typescript

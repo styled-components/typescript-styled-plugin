@@ -4,50 +4,120 @@
   "description": "TypeScript language service plugin that adds IntelliSense for styled components",
   "keywords": [
     "TypeScript",
+    "css",
+    "css-in-js",
     "styled",
-    "styled-components",
     "styled components",
-    "css"
+    "styled-components"
   ],
-  "main": "lib/index.js",
-  "author": "Styled Components",
+  "bugs": {
+    "url": "https://github.com/styled-components/typescript-styled-plugin/issues"
+  },
   "license": "MIT",
+  "author": "Styled Components",
   "repository": {
     "type": "git",
     "url": "https://github.com/styled-components/typescript-styled-plugin.git"
   },
-  "bugs": {
-    "url": "https://github.com/styled-components/typescript-styled-plugin/issues"
-  },
-  "dependencies": {
-    "@vscode/emmet-helper": "^2.9.2",
-    "typescript-template-language-service-decorator": "^2.3.2",
-    "vscode-css-languageservice": "^6.2.11",
-    "vscode-languageserver-textdocument": "^1.0.11",
-    "vscode-languageserver-types": "^3.17.5"
-  },
+  "workspaces": [
+    ".",
+    "test/e2e"
+  ],
   "files": [
     "lib"
   ],
-  "devDependencies": {
-    "@types/chai": "^4.3.4",
-    "@types/mocha": "^10.0.1",
-    "@types/node": "^18.11.9",
-    "@typescript-eslint/eslint-plugin": "^6.14.0",
-    "@typescript-eslint/parser": "^6.14.0",
-    "chai": "^4.3.7",
-    "eslint": "^8.55.0",
-    "eslint-plugin-prettier": "^5.0.1",
-    "glob": "^8.0.3",
-    "mocha": "^10.1.0",
-    "prettier": "^3.1.1",
-    "typescript": "^5.3.3"
+  "type": "module",
+  "main": "./lib/index.js",
+  "types": "./lib/index.d.cts",
+  "typesVersions": {
+    "*": {
+      "api": [
+        "lib/esm/api.d.cts"
+      ]
+    }
+  },
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.cts",
+      "default": "./lib/index.js"
+    },
+    "./api": {
+      "import": {
+        "types": "./lib/esm/api.d.mts",
+        "default": "./lib/esm/api.mjs"
+      },
+      "require": {
+        "types": "./lib/esm/api.d.cts",
+        "default": "./lib/esm/api.cjs"
+      }
+    },
+    "./lib/index": {
+      "types": "./lib/index.d.cts",
+      "default": "./lib/index.js"
+    },
+    "./lib/index.js": {
+      "types": "./lib/index.d.cts",
+      "default": "./lib/index.js"
+    },
+    "./lib/api": {
+      "types": "./lib/api.d.ts",
+      "default": "./lib/api.js"
+    },
+    "./lib/api.js": {
+      "types": "./lib/api.d.ts",
+      "default": "./lib/api.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org"
   },
   "scripts": {
-    "compile": "tsc -p .",
-    "watch:compile": "tsc --watch -p .",
-    "e2e": "mocha e2e/tests --slow 2000 --timeout 10000",
-    "lint": "eslint src",
-    "unit": "mocha ./lib/test"
-  }
+    "benchmark": "node --expose-gc --no-flush-bytecode --experimental-transform-types --no-warnings test/performance/template-language-service.bench.ts",
+    "changeset": "changeset",
+    "changeset-credits": "node --experimental-strip-types scripts/changeset-credits.ts",
+    "changeset-publish": "changeset publish",
+    "changeset-version": "changeset version",
+    "compare-release": "node --experimental-strip-types --no-warnings scripts/compare-release.ts",
+    "compile": "tsdown",
+    "format": "oxfmt --write .",
+    "format:check": "oxfmt --check .",
+    "lint": "oxlint . --deny-warnings",
+    "lint:fix": "oxlint --fix .",
+    "pack:artifact": "yarn pack --out package-artifact/package.tgz",
+    "prepack": "yarn compile",
+    "test": "yarn test:unit && yarn test:e2e",
+    "test:e2e": "yarn compile && yarn test:e2e:run",
+    "test:e2e:5.9": "TSSERVER_TYPESCRIPT_PACKAGE=typescript-5.9 yarn test:e2e",
+    "test:e2e:current": "TSSERVER_TYPESCRIPT_PACKAGE=typescript-current yarn test:e2e",
+    "test:e2e:minimum": "TSSERVER_TYPESCRIPT_PACKAGE=typescript-minimum yarn test:e2e",
+    "test:e2e:run": "node --experimental-strip-types scripts/with-deadline.ts 300000 -- vitest run test/e2e/scenarios --configLoader runner",
+    "test:pack": "node --experimental-strip-types scripts/check-pack-contents.ts",
+    "test:package-api": "node --experimental-strip-types test/package-api/runtime.ts",
+    "test:package-api:consumers": "node --experimental-strip-types scripts/test-package-api-types.ts",
+    "test:scaling": "node --expose-gc --no-flush-bytecode --experimental-transform-types --no-warnings test/performance/scaling-check.ts",
+    "test:unit": "node --experimental-strip-types scripts/with-deadline.ts 60000 -- vitest run test/unit --configLoader runner",
+    "typecheck": "tsc --noEmit -p . && tsc --noEmit -p scripts && tsc --noEmit -p test/e2e && tsc --noEmit -p test/package-api",
+    "verify": "yarn format:check && yarn lint && yarn typecheck && yarn test:unit && yarn test:scaling && yarn pack:artifact && yarn test:e2e:run && yarn test:package-api && yarn test:package-api:consumers && yarn test:pack",
+    "watch:compile": "tsdown --watch"
+  },
+  "dependencies": {
+    "@vscode/emmet-helper": "2.11.0",
+    "typescript-template-language-service-decorator": "^2.3.2",
+    "vscode-css-languageservice": "6.3.10",
+    "vscode-languageserver-textdocument": "1.0.15",
+    "vscode-languageserver-types": "3.18.4"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^3.0.3",
+    "@types/node": "^24",
+    "oxfmt": "^0.70.0",
+    "oxlint": "^1.85.0",
+    "tinybench": "^6.2.0",
+    "tsdown": "^0.23.0",
+    "typescript": "~6.0.3",
+    "vite": "^8.3.1",
+    "vitest": "^5.0.2"
+  },
+  "packageManager": "yarn@4.18.1"
 }

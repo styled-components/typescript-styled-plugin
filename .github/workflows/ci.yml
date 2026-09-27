@@ -1,66 +1,183 @@
-on:
-    push:
-        branches:
-            - main
-    pull_request:
-        branches:
-            - main
 name: Continuous Integration
 
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
 jobs:
-    lint:
-        name: Lint
-        runs-on: ubuntu-latest
-        steps:
-            - name: Checkout
-              uses: actions/checkout@v2
-            - name: Install Node.js
-              uses: actions/setup-node@v3
-              with:
-                  node-version: 18
-            - run: npm install
-            - name: Linting
-              run: npm run lint
-    compile:
-        name: Compile
-        runs-on: ubuntu-latest
-        steps:
-            - name: Checkout
-              uses: actions/checkout@v2
-            - name: Install Node.js
-              uses: actions/setup-node@v3
-              with:
-                  node-version: 18
-            - run: npm install
-            - name: Compiling
-              run: npm run compile
-    unit:
-        name: Unit Tests
-        runs-on: ubuntu-latest
-        steps:
-            - name: Checkout
-              uses: actions/checkout@v2
-            - name: Install Node.js
-              uses: actions/setup-node@v3
-              with:
-                  node-version: 18
-            - run: npm install
-            - name: Compiling
-              run: npm run compile
-            - run: npm run unit
-    e2e:
-        name: E2E Tests
-        runs-on: ubuntu-latest
-        steps:
-            - name: Checkout
-              uses: actions/checkout@v2
-            - name: Install Node.js
-              uses: actions/setup-node@v3
-              with:
-                  node-version: 18
-            - run: npm install
-            - run: npm install
-              working-directory: ./e2e
-            - name: Compiling
-              run: npm run compile
-            - run: npm run e2e
+  lint:
+    name: Lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: Formatting
+        run: yarn format:check
+      - name: Linting
+        run: yarn lint
+  compile:
+    name: Compile and Typecheck
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: Type checking
+        run: yarn typecheck
+      # The only build in this workflow: prepack compiles lib/ before packing.
+      - name: Compile and pack
+        run: yarn pack:artifact
+      - name: Package API types
+        run: yarn test:package-api:consumers
+      - name: Package contents
+        run: yarn test:pack
+      - name: Upload packed package
+        uses: actions/upload-artifact@v7
+        with:
+          name: package-tarball
+          path: package-artifact/*.tgz
+          if-no-files-found: error
+          retention-days: 1
+      - name: Upload build output
+        uses: actions/upload-artifact@v7
+        with:
+          name: lib
+          path: lib
+          if-no-files-found: error
+          retention-days: 1
+  unit:
+    name: Unit Tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - run: yarn test:unit
+      - name: Scaling guardrail
+        run: yarn test:scaling
+  e2e:
+    name: E2E (${{ matrix.name }})
+    runs-on: ubuntu-24.04
+    needs: compile
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Node 22.12 / TypeScript 5.0.4 (minimum supported)
+            node-version: 22.12.0
+            typescript-package: typescript-minimum
+            test-package-runtime: true
+          - name: Node 22.12 / TypeScript 5.9.3
+            node-version: 22.12.0
+            typescript-package: typescript-5.9
+          - name: Node 22.12 / latest supported TypeScript
+            node-version: 22.12.0
+            typescript-package: typescript-current
+          # No node-version: the setup action reads .github/.node-version.
+          - name: development Node / latest supported TypeScript
+            typescript-package: typescript-current
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          node-version: ${{ matrix.node-version }}
+      - name: Download build output
+        uses: actions/download-artifact@v8
+        with:
+          name: lib
+          path: lib
+      - name: Download packed package
+        if: matrix.test-package-runtime
+        uses: actions/download-artifact@v8
+        with:
+          name: package-tarball
+          path: package-artifact
+      - name: Test packed package runtime
+        if: matrix.test-package-runtime
+        run: yarn test:package-api package-artifact/*.tgz
+      - name: Run tsserver scenarios
+        run: yarn test:e2e:run
+        env:
+          TSSERVER_TYPESCRIPT_PACKAGE: ${{ matrix.typescript-package }}
+  tsserver-smoke-floor:
+    # The vitest-based E2E suite above cannot run on this package's own Node floor, 14.21.3
+    # (docs/tsserver-host.md): vitest declares a newer engines.node than that. The floor is
+    # proven instead with a plain-CommonJS script driving a real tsserver over stdio
+    # (test/package-api/tsserver-smoke.cjs).
+    name: tsserver smoke (Node 14.21.3 / TypeScript 5.0.4, package floor)
+    runs-on: ubuntu-24.04
+    needs: compile
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: Download packed package
+        uses: actions/download-artifact@v8
+        with:
+          name: package-tarball
+          path: package-artifact
+      - name: Install Node floor runtime
+        uses: actions/setup-node@v7
+        with:
+          node-version: 14.21.3
+          package-manager-cache: false
+      - name: Real tsserver smoke test on the Node floor
+        run: node test/package-api/tsserver-smoke.cjs package-artifact/*.tgz node_modules/typescript-minimum
+  tsserver-smoke-legacy-typescript:
+    # TypeScript below 5.0 (isSupportedTypeScriptVersion, src/tsserver/tsserver-plugin.ts) never
+    # activates the plugin, for the reason recorded in docs/tsserver-host.md ("TypeScript
+    # versions"). This proves the plugin logs the unsupported-version message and leaves tsserver
+    # answering normally on one such version, on the same modern Node the rest of the e2e matrix
+    # uses, isolating the TypeScript-version axis from the Node-version one.
+    name: tsserver smoke (TypeScript 4.9.5, graceful non-activation below the 5.0 floor)
+    runs-on: ubuntu-24.04
+    needs: compile
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: Download packed package
+        uses: actions/download-artifact@v8
+        with:
+          name: package-tarball
+          path: package-artifact
+      - name: Real tsserver smoke test on TypeScript 4.9.5
+        run: node test/package-api/tsserver-smoke.cjs package-artifact/*.tgz node_modules/typescript-legacy
+        env:
+          TSSERVER_SMOKE_MODE: inactive

@@ -1,0 +1,27 @@
+{
+  // Use the project-local Oxfmt through the official Oxc extension
+  "prettier.enable": false,
+  "editor.defaultFormatter": "oxc.oxc-vscode",
+  "editor.detectIndentation": false,
+  "editor.formatOnSave": false,
+  "editor.insertSpaces": true,
+  "editor.rulers": [100],
+  "editor.tabSize": 2,
+  "files.eol": "\n",
+  "files.insertFinalNewline": true,
+  "files.trimTrailingWhitespace": true,
+
+  // Apply safe Oxlint fixes after formatting
+  "editor.codeActionsOnSave": {
+    "source.format.oxc": "always",
+    "source.fixAll.oxc": "always",
+    "source.organizeImports": "never"
+  },
+
+  // Markdown uses trailing spaces for explicit line breaks
+  "[markdown]": {
+    "files.trimTrailingWhitespace": false
+  },
+  "oxc.disableNestedConfig": true,
+  "oxc.fmt.disableNestedConfig": true
+}

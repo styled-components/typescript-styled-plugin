@@ -1,0 +1,35 @@
+name: Set up Node.js and dependencies
+description: Installs Node.js, enables Corepack, restores the Yarn cache, and installs the locked dependencies. Runs after actions/checkout, which has to fetch this file first.
+
+inputs:
+  node-version:
+    description: Node.js version to install. Empty reads .github/.node-version, the development version.
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Install Node.js
+      uses: actions/setup-node@v7
+      with:
+        node-version: ${{ inputs.node-version }}
+        node-version-file: ${{ inputs.node-version == '' && '.github/.node-version' || '' }}
+        package-manager-cache: false
+    - name: Enable Corepack
+      shell: bash
+      run: corepack enable
+    - name: Find Yarn cache
+      id: yarn-cache-dir
+      shell: bash
+      run: echo "dir=$(yarn config get cacheFolder)" >> "$GITHUB_OUTPUT"
+    - name: Cache Yarn packages
+      uses: actions/cache@v6
+      with:
+        path: ${{ steps.yarn-cache-dir.outputs.dir }}
+        key: ${{ runner.os }}-yarn-${{ hashFiles('yarn.lock', 'package.json') }}
+        restore-keys: |
+          ${{ runner.os }}-yarn-
+    - name: Install dependencies
+      shell: bash
+      run: yarn install --immutable

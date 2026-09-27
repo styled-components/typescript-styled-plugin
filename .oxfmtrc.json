@@ -1,0 +1,14 @@
+{
+  // test/e2e/closed-file-project-fixture/unclosed.ts must end right after its closing backtick,
+  // with no trailing newline: that exact byte shape is what makes the plugin compute a template
+  // end past the last real character, the crash test/e2e/scenarios/errors.test.ts guards against
+  // (docs/architecture.md, "Mapping back to the template"). insertFinalNewline (the project-wide
+  // .editorconfig default) would silently reintroduce it on every format run.
+  "ignorePatterns": ["test/e2e/closed-file-project-fixture/unclosed.ts"],
+  "semi": false,
+  "singleQuote": true,
+  "sortImports": true,
+  "sortPackageJson": {
+    "sortScripts": true
+  }
+}
