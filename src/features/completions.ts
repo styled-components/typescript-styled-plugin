@@ -348,10 +348,13 @@ function startsWithAtKeyword(text: string, from: number, to: number): boolean {
 }
 
 /**
- * `document` with "\n" at the end of every template line, for Emmet, which reads the caret's line
- * from the text between "\n" characters (`getCurrentLine`, @vscode/emmet-helper) while positions
- * follow the template's own lines (docs/architecture.md, Completions). `document` itself when every
- * template line already ends in "\n" there.
+ * `document` with "\n" written over the last character of every template line, for Emmet, which
+ * reads the caret's line from the text between "\n" characters (`getCurrentLine`,
+ * @vscode/emmet-helper) while positions follow the template's own lines (docs/architecture.md,
+ * Completions). An overwrite, not an insert, so the view keeps the document's length and offsets;
+ * the overwritten character is always the template's line terminator, a fill character, or a space
+ * an escape stand-in wrote, never CSS the user typed. `document` itself when every template line
+ * already ends in "\n" there.
  */
 export function withTemplateLineBreaks(
   document: TextDocument,

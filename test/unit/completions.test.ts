@@ -30,6 +30,7 @@ describe('withTemplateLineBreaks', () => {
 
       const view = withTemplateLineBreaks(document, lineMap, templateStart)
 
+      assert.notStrictEqual(view, document, 'each row needs a realigned view, not the early return')
       assert.strictEqual(view.getText().length, document.getText().length)
 
       for (let offset = 0; offset <= rawText.length; offset++) {
@@ -41,9 +42,14 @@ describe('withTemplateLineBreaks', () => {
         )
       }
 
-      const lines = view.getText().split('\n')
+      /** The lines Emmet's getCurrentLine sees; getLineRange stops before a "\r" of a "\r\n" too. */
+      const emmetLines = view.getText().split('\n')
       for (let line = 0; line < view.lineCount; line++) {
-        assert.strictEqual(view.getText(view.getLineRange(line)), lines[line], `line ${line}`)
+        assert.strictEqual(
+          view.getText(view.getLineRange(line)),
+          emmetLines[line].replace(/\r$/, ''),
+          `line ${line}`,
+        )
       }
     },
   )
