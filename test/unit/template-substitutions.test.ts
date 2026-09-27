@@ -1187,6 +1187,14 @@ describe('substituter', () => {
       'background: url(\n  xxxxxxxx\n);',
     ],
     ['a quoted url() argument', 'background: url("${\n  x\n}");', 'background: url("xxxxxxxx");'],
+  ])(
+    'should fill a placeholder inside %s with x over its whole length (#13)',
+    (_description, value, expected) => {
+      assert.strictEqual(performSubstitutions(value), expected)
+    },
+  )
+
+  it.each([
     ['a double-quoted string', 'content: "${\n  x\n}";', 'content: "xxxxxxxx";'],
     ['a single-quoted string', "content: '${\n  x\n}';", "content: 'xxxxxxxx';"],
     [
@@ -1202,7 +1210,7 @@ describe('substituter', () => {
     ['a line comment', '// ${\n  a\n} note\ncolor: red;', '// xxxxxxxx note\ncolor: red;'],
     ['a block comment', '/* ${\n  x\n} */\ncolor: red;', '/* xxxxxxxx */\ncolor: red;'],
   ])(
-    'should fill a placeholder inside %s with x over its whole length (#13)',
+    'should fill a placeholder inside %s with x over its whole length',
     (_description, value, expected) => {
       assert.strictEqual(performSubstitutions(value), expected)
     },

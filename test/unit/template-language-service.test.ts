@@ -1165,7 +1165,8 @@ describe('StyledTemplateLanguageService', () => {
     /**
      * getTemplateSubstitutions must not leave the placeholder's own line breaks in a url() token:
      * a line break is not valid there, so the CSS service would otherwise report "), semi-colon,
-     * and rule-or-selector" errors past it, the exact shape issue #13 reports.
+     * and rule-or-selector" errors past it, the exact multi-line url() shape a comment on issue
+     * #13 reports (the issue itself reports a plain multi-line property value).
      */
     const text = [
       '&.editField {',
@@ -1212,6 +1213,14 @@ describe('StyledTemplateLanguageService', () => {
     [
       'a url() argument after "#", with a longer expression',
       'fill: url(#${\n  props.gradientId\n});\ncolr: red;',
+    ],
+    [
+      'a url() argument after "#" with text after the placeholder',
+      'fill: url(#${id}-grad);\ncolr: red;',
+    ],
+    [
+      'a url() argument after "#" with a longer expression and text after the placeholder',
+      'mask: url(#${p => p.id}_mask);\ncolr: red;',
     ],
     ['a url() argument after its own line break', 'background: url(\n  ${\n  a\n}\n);\ncolr: red;'],
     ['a url() argument that starts a value line', 'background:\nurl(\n  ${\n  a\n});\ncolr: red;'],
