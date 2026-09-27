@@ -416,11 +416,29 @@ This lists the git authors and co-authors behind every pending changeset, so a
 thank-you is derived from history rather than recalled from memory.
 
 Release automation lives in `.github/workflows/release.yml`. On every push to
-`main`, it runs `yarn verify`, then either opens or updates a "Version
-Packages" pull request (one `changeset version` behind pending changesets) or,
-once that pull request is merged, builds and publishes the package. A failing
-`verify` stops the job before anything is published. Nobody bumps `version` or runs
-`npm publish` by hand.
+`main`, a `verify` job runs `yarn verify` once; the `release` and `prerelease`
+jobs both wait on it (`needs: verify`) before doing anything else. The
+`release` job either opens or updates a "Version Packages" pull request (one
+`changeset version` behind pending changesets) or, once that pull request is
+merged, builds and publishes the package. A failing `verify` stops both jobs
+before anything is published. Nobody bumps `version` or runs `npm publish` by
+hand.
+
+The `prerelease` job publishes a snapshot build to the npm `test` dist-tag
+whenever the push leaves pending changesets behind (any `.changeset/*.md`
+other than `README.md`), so a reviewer can install a pull request's changes
+before the "Version Packages" pull request merges. It versions with
+`changeset version --snapshot prerelease` (never committed), publishes with
+`changeset publish --tag test --no-git-tag`, then tags the commit itself
+(`<package>@<version>`) and creates a GitHub prerelease, using
+`scripts/prerelease-notes.ts` to pull that version's release notes out of the
+`CHANGELOG.md` the snapshot version just wrote. It no-ops once the "Version
+Packages" pull request merges, since that merge consumes every pending
+changeset. Install a snapshot with:
+
+```bash
+npm install @styled/typescript-styled-plugin@test
+```
 
 Publishing itself needs no long-lived npm token: it relies on
 [npm trusted publishing](https://docs.npmjs.com/trusted-publishers), which
@@ -459,9 +477,12 @@ release requires:
   (`https://rekor.sigstore.dev`), the default endpoints Yarn calls.
 
 When Sigstore is unavailable, the publish step fails before anything reaches
-npm. Re-run the release job once Sigstore recovers (its status page is
+npm, in either the `release` or the `prerelease` job (both publish with
+provenance). Re-run the failed job once Sigstore recovers (its status page is
 [status.sigstore.dev](https://status.sigstore.dev)). The re-run is safe:
 `changeset publish` publishes only versions the registry does not list yet,
-and it creates a git tag only for a version it published, so the failed
-attempt leaves no tag, GitHub release, or registry entry behind to block the
-retry.
+the `release` job's git tag comes from `changeset publish` itself for a
+version it published, and the `prerelease` job's git tag and GitHub release
+are separate steps that run only after its publish step succeeds; a failed
+publish attempt leaves no tag, GitHub release, or registry entry behind to
+block the retry.

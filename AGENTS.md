@@ -90,7 +90,7 @@ Git and releases
 
 - Noteworthy changes and bugfixes get a changeset (`corepack yarn changeset`). Changeset bodies use declarative release-note voice (what changed, for whom), never first-person "I", and no conventional-commit prefixes. Match the tone of existing `.changeset/*.md` entries.
 - Before crediting anyone in a changeset, derive the list rather than recalling it: `corepack yarn changeset-credits [name]` reports every commit author and co-author who introduced or edited that changeset file, pending or already released.
-- Version bumps and npm publishing happen only through the release workflow (`.github/workflows/release.yml`), from accumulated changesets; contributions leave `version` alone and never publish by hand.
+- Version bumps and npm publishing happen only through the release workflow (`.github/workflows/release.yml`), from accumulated changesets, including the snapshot builds its `prerelease` job publishes to the npm `test` dist-tag on every push to `main` with pending changesets (docs/maintenance.md, "Releases"); contributions leave `version` alone and never publish by hand.
 - `scripts/changelog.cjs` is the changelog generator, wired in `.changeset/config.json` along with the `maintainers` list it reads. Attribution comes from git history, so the release job checks out full history rather than a shallow clone.
 - Conventional commit subjects (`fix:`, `feat:`, `test:`, `docs:`, `chore:`) on commits and PR titles. Never `git stash`; use a temporary commit.
 - Keep PRs to one kind of change (tooling, behavior, packaging) so each can be reviewed and reverted alone.

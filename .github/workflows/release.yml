@@ -8,15 +8,35 @@ on:
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
 
-permissions:
-  contents: write
-  pull-requests: write
-  id-token: write
-
 jobs:
-  release:
+  verify:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup
+
+      # The same gate as a local `yarn verify`: formatting, lint, typecheck, unit, scaling, the
+      # packed artifact, e2e on the default TypeScript, and the package API and contents checks. A
+      # regression any of them catches never reaches the release or prerelease job below, both of
+      # which wait on this job (`needs: verify`) instead of running it again themselves.
+      - name: Verify
+        run: yarn verify
+
+  release:
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -35,12 +55,6 @@ jobs:
       # that registry-url would write; it takes the publish registry from package.json
       # publishConfig.
       - uses: ./.github/actions/setup
-
-      # The same gate as a local `yarn verify`: formatting, lint, typecheck, unit, scaling, the
-      # packed artifact, e2e on the default TypeScript, and the package API and contents checks.
-      # A regression any of them catches never reaches the publish step below.
-      - name: Verify
-        run: yarn verify
 
       - name: Create Release Pull Request or Publish
         id: changesets
@@ -72,3 +86,79 @@ jobs:
           # down, the publish fails with nothing published; re-run this job once Sigstore recovers
           # (docs/maintenance.md, "Releases").
           YARN_NPM_PUBLISH_PROVENANCE: 'true'
+
+  prerelease:
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # Full history: scripts/changelog.cjs, invoked by `changeset version` below, asks git
+          # which commits touched each changeset file (same reason as the release job's checkout).
+          fetch-depth: 0
+          # Left at the default (true): unlike the release job, which lets changesets/action push
+          # through its own Octokit client, this job pushes the prerelease tag with a plain `git
+          # push`, which needs the token actions/checkout persists into the local git config.
+
+      - uses: ./.github/actions/setup
+
+      # Every push to main runs this job, including the one that merges the "Version Packages"
+      # pull request; that merge consumes every pending changeset, so every step below is gated on
+      # this check and the job no-ops once there is nothing left to snapshot or publish.
+      - name: Check for pending changesets
+        id: changesets
+        run: |
+          shopt -s nullglob
+          count=0
+          for f in .changeset/*.md; do
+            [ "$(basename "$f")" = "README.md" ] && continue
+            count=$((count + 1))
+          done
+          echo "has_pending=$([ "$count" -gt 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+      - name: Configure git identity
+        if: steps.changesets.outputs.has_pending == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      # Snapshot version bump, in place and never committed: .changeset/config.json's `snapshot`
+      # block (useCalculatedVersion, prereleaseTemplate) turns this into a calculated version like
+      # 1.1.0-prerelease-20260927190000 instead of the un-configured default, 0.0.0-prerelease-<id>.
+      # This also rewrites CHANGELOG.md through the same scripts/changelog.cjs generator an
+      # ordinary `changeset version` uses, which scripts/prerelease-notes.ts reads below.
+      - name: Snapshot version bump
+        id: version
+        if: steps.changesets.outputs.has_pending == 'true'
+        run: |
+          yarn changeset-version --snapshot prerelease
+          echo "name=$(node -p "require('./package.json').name")" >> "$GITHUB_OUTPUT"
+          echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Publish to npm test tag
+        if: steps.changesets.outputs.has_pending == 'true'
+        # No git tag from changesets (--no-git-tag): the next step creates one itself, annotated
+        # and named after the snapshot version, once the publish above has actually succeeded.
+        run: |
+          yarn changeset-publish --tag test --no-git-tag
+          echo "Published ${{ steps.version.outputs.name }}@${{ steps.version.outputs.version }} to the npm \`test\` dist-tag." >> "$GITHUB_STEP_SUMMARY"
+        env:
+          # Same OIDC-to-npm-token exchange and provenance signing as the release job's publish
+          # step; see the comment on that step for the full mechanism and its requirements.
+          YARN_NPM_PUBLISH_PROVENANCE: 'true'
+
+      - name: Create git tag and GitHub prerelease
+        if: steps.changesets.outputs.has_pending == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ref="${{ steps.version.outputs.name }}@${{ steps.version.outputs.version }}"
+          node --experimental-strip-types scripts/prerelease-notes.ts > "$RUNNER_TEMP/prerelease-notes.md"
+          git tag -a "$ref" -m "$ref"
+          git push origin "refs/tags/$ref"
+          gh release create "$ref" --prerelease --title "$ref" --notes-file "$RUNNER_TEMP/prerelease-notes.md"

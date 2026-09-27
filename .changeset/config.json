@@ -19,5 +19,9 @@
   "format": "oxfmt",
   "ignore": [],
   "linked": [],
+  "snapshot": {
+    "prereleaseTemplate": "{tag}-{datetime}",
+    "useCalculatedVersion": true
+  },
   "updateInternalDependencies": "patch"
 }
