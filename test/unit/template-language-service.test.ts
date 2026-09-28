@@ -26,6 +26,7 @@ import {
 import { StyledTemplateLanguageService } from '../../src/template-language-service'
 import { getTemplateSubstitutions } from '../../src/template/template-substitutions'
 import { pluginIdentity } from '../../src/tsserver/plugin-identity'
+import { LINE_SEPARATOR } from '../../src/virtual-document/css-code-scanner'
 import {
   StyledVirtualDocumentProvider,
   VirtualDocumentProvider,
@@ -547,6 +548,28 @@ describe('StyledTemplateLanguageService', () => {
         assert.include(namesAt(text, caret), expected)
       },
     )
+
+    /**
+     * Emmet reads the caret's line from the document text between "\n" characters, while the
+     * caret's position follows the template's own lines (docs/architecture.md, Completions).
+     */
+    it.each([
+      ['the last line of a multi-line placeholder', 'margin: ${\n  a\n}; color: #12'],
+      ['a line started by a lone carriage return', 'color: red;\rcolor: #12'],
+      [
+        'a line started by a line separator inside a string',
+        `content: "a${LINE_SEPARATOR}b"; color: #12`,
+      ],
+      ['a line started by a line continuation inside a string', 'content: "a\\\nb"; color: #12'],
+    ])('should offer an Emmet value expansion on %s', (_description, text) => {
+      const context = createSubstitutingContext(text, 'styled.div', { count: 0 })
+
+      const names = createService()
+        .getCompletionsAtPosition(context, context.toPosition(text.length))
+        .entries.map((entry) => entry.name)
+
+      assert.include(names, '#121212')
+    })
 
     it.each([
       [
@@ -1137,6 +1160,100 @@ describe('StyledTemplateLanguageService', () => {
     assert.strictEqual(diagnostics[0]?.start, context.text.lastIndexOf('}'))
     assert.strictEqual(diagnostics[0]?.length, 1)
   })
+
+  it('should report no false errors for a placeholder spanning a line break inside an unquoted url() argument (#13), against the real CSS language service', () => {
+    /**
+     * getTemplateSubstitutions must not leave the placeholder's own line breaks in a url() token:
+     * a line break is not valid there, so the CSS service would otherwise report "), semi-colon,
+     * and rule-or-selector" errors past it, the exact multi-line url() shape a comment on issue
+     * #13 reports (the issue itself reports a plain multi-line property value).
+     */
+    const text = [
+      '&.editField {',
+      '      background-image: url(${({ theme }) =>',
+      '         base_icon_URL +',
+      '         theme.tintedGlassHex(theme.foreground, theme.background).slice(1) +',
+      "         '/pencil--v1.png'});",
+      '  }',
+      '  colr: red;',
+    ].join('\n')
+
+    assertOnlyColrControl(text)
+  })
+
+  it.each([
+    ['a quoted url() argument', 'background: url("${\n  p.image\n}"); colr: red;'],
+    ['a double-quoted string', 'content: "${\n  p.label\n}"; colr: red;'],
+    ['a single-quoted string', "content: '${\n  p.label\n}'; colr: red;"],
+    [
+      'a string followed by a later value placeholder',
+      'content: "${\n  p.label\n}";\ncolor: ${c};\ncolr: red;',
+    ],
+    [
+      'a string followed by a later block mixin',
+      'content: "${\n  p.label\n}";\n${mixin}\ncolr: red;',
+    ],
+    [
+      'a string followed by a mixin on the same line',
+      'content: "${\n  p.label\n}"; ${mixin}\ncolr: red;',
+    ],
+    ['a string holding two placeholders', 'content: "${\n  a\n} ${\n  b\n}";\ncolr: red;'],
+    ['a string followed by another string', 'content: "${\n  a\n}" "${\n  b\n}";\ncolr: red;'],
+    ['a line comment', '// ${\n  a\n} note\ncolr: red;'],
+  ])(
+    'should report only the colr control for a multi-line placeholder in %s (#13), against the real CSS language service',
+    (_description, text) => {
+      assertOnlyColrControl(text)
+    },
+  )
+
+  it.each([
+    ['a value, with the control on its last line', 'color: ${\n  a\n}; colr: red;'],
+    ['a url() argument after "#"', 'fill: url(#${\n  id\n});\ncolr: red;'],
+    [
+      'a url() argument after "#", with a longer expression',
+      'fill: url(#${\n  props.gradientId\n});\ncolr: red;',
+    ],
+    [
+      'a url() argument after "#" with text after the placeholder',
+      'fill: url(#${id}-grad);\ncolr: red;',
+    ],
+    [
+      'a url() argument after "#" with a longer expression and text after the placeholder',
+      'mask: url(#${p => p.id}_mask);\ncolr: red;',
+    ],
+    ['a url() argument after its own line break', 'background: url(\n  ${\n  a\n}\n);\ncolr: red;'],
+    ['a url() argument that starts a value line', 'background:\nurl(\n  ${\n  a\n});\ncolr: red;'],
+    [
+      'a string followed by a multi-line mixin on the same line',
+      'content: "${\n  a\n}"; ${\n  mixin\n};\ncolr: red;',
+    ],
+    [
+      'an @media prelude',
+      '@media ${({ theme }) =>\n    theme.breakpoints.md} {\n  color: red;\n}\ncolr: red;',
+    ],
+    [
+      'an @media feature value',
+      '@media (min-width: ${({ theme }) =>\n    theme.md}px) {\n  color: red;\n}\ncolr: red;',
+    ],
+    [
+      'an @media prelude before "and"',
+      '@media ${\n  a\n} and (min-width: 1px) {\n  color: red;\n}\ncolr: red;',
+    ],
+    ['an @keyframes name', '@keyframes ${\n  a\n} {\n  from { color: red; }\n}\ncolr: red;'],
+    ['an @container prelude', '@container ${\n  a\n} {\n  color: red;\n}\ncolr: red;'],
+    ['an @layer statement', '@layer ${\n  a\n};\ncolr: red;'],
+    [
+      'a property name',
+      '${({ theme }) =>\n  theme.rtl ? "margin-left" : "margin-right"}: 4px;\ncolr: red;',
+    ],
+    ['a custom property name', '--v-${\n  a\n}: 1px;\ncolr: red;'],
+  ])(
+    'should report only the colr control for a placeholder in %s, against the real CSS language service',
+    (_description, text) => {
+      assertOnlyColrControl(text)
+    },
+  )
 
   it.each([
     ['a CSS-escaped quote, which opens no string', 'content: \\\\"x; }'],
@@ -2617,6 +2734,21 @@ function createSubstitutingContext(
     toPosition: base.toPosition,
     typescript: base.typescript,
   }
+}
+
+/**
+ * Asserts that the real CSS language service reports exactly the misspelled `colr` property: the
+ * positive control that the rest of the template was still validated, at its template offset.
+ */
+function assertOnlyColrControl(text: string) {
+  const context = createSubstitutingContext(text, 'styled.div', { count: 0 })
+
+  const diagnostics = createService().getSemanticDiagnostics(context)
+
+  assert.deepEqual(
+    diagnostics.map(({ length, messageText, start }) => ({ length, messageText, start })),
+    [{ length: 4, messageText: "Unknown property: 'colr'", start: text.indexOf('colr') }],
+  )
 }
 
 function createService() {

@@ -36,8 +36,7 @@ export function getTemplateSubstitutions(
    * styled-components receives (docs/architecture.md, Virtual document); the output keeps the
    * raw text between placeholders, which the virtual document replaces the same way.
    */
-  const syntaxText = replaceJavaScriptEscapes(maskSubstitutions(templateText, spans))
-  const nonCodeRuns = findNonCodeRuns(syntaxText)
+  const { nonCodeRuns, solidSpans, text: syntaxText } = buildSyntaxText(templateText, spans)
   const boundaryScanner = createSyntaxBoundaryScanner(syntaxText, nonCodeRuns)
   const codeLookback = createCodeLookback(syntaxText, 0)
   const findLineConditionKeyword = createConditionKeywordFinder(syntaxText)
@@ -47,7 +46,16 @@ export function getTemplateSubstitutions(
   let lastOffset = 0
   let previousAtStatementBoundary = false
 
-  for (const span of spans) {
+  for (let spanIndex = 0; spanIndex < spans.length; spanIndex++) {
+    const span = spans[spanIndex]
+    substitutedParts.push(templateText.slice(lastOffset, span.start))
+    if (solidSpans?.[spanIndex]) {
+      substitutedParts.push(SOLID_FILL.repeat(span.end - span.start))
+      previousAtStatementBoundary = false
+      lastSpanStart = span.start
+      lastOffset = span.end
+      continue
+    }
     advanceScanState(scanState, syntaxText, span.start)
     const onlyWhitespaceSinceLineStart = !scanState.sawNonWhitespace
     const previousSignificantOffset = codeLookback.previousSignificant(span.start)
@@ -88,7 +96,6 @@ export function getTemplateSubstitutions(
       followsStatementBoundary && !STATEMENT_SLOT_EXCLUDED_NEXT.has(nextSignificant ?? '')
     const gapStart = skipWhitespaceBackward(syntaxText, span.start, lastOffset)
 
-    substitutedParts.push(templateText.slice(lastOffset, span.start))
     substitutedParts.push(
       getSubstitution({
         atRuleCondition: conditionKeyword
@@ -359,6 +366,55 @@ function createNonWhitespaceScanner(text: string, runs: NonCodeRuns): (from: num
   }
 }
 
+/** The solid fill's one character (docs/architecture.md, substitution invariants). */
+const SOLID_FILL = 'x'
+
+interface SyntaxText {
+  readonly nonCodeRuns: NonCodeRuns
+  /** Indexed like the spans: true for a placeholder that takes the solid fill. Undefined when none does. */
+  readonly solidSpans: readonly boolean[] | undefined
+  readonly text: string
+}
+
+/**
+ * The masked text with JavaScript escapes replaced, its non-code runs, and which placeholders take
+ * the solid fill (docs/architecture.md, substitution invariants). Every placeholder is masked as
+ * "x" over its whole length, so the text before a placeholder, which alone decides whether the
+ * placeholder starts inside a run, is already final when the runs are found: one build, one pass.
+ */
+function buildSyntaxText(templateText: string, spans: ReadonlyArray<SubstitutionSpan>): SyntaxText {
+  const text = replaceJavaScriptEscapes(maskSubstitutions(templateText, spans))
+  const nonCodeRuns = findNonCodeRuns(text)
+  return { nonCodeRuns, solidSpans: findSolidSpans(text, nonCodeRuns, spans), text }
+}
+
+/**
+ * Which spans start inside a comment, string, or unquoted url() argument run of `text`, not an
+ * escape: a run starting with a backslash, whose escape may take the placeholder's first character
+ * (an unquoted url() argument whose function name starts with an escape, `\75 rl(`, starts with one
+ * too). Spans and runs both ascend, so the run index only moves forward. Undefined when no span
+ * does.
+ */
+function findSolidSpans(
+  text: string,
+  { ends, starts }: NonCodeRuns,
+  spans: ReadonlyArray<SubstitutionSpan>,
+): readonly boolean[] | undefined {
+  let solidSpans: boolean[] | undefined
+  let run = 0
+  for (let index = 0; index < spans.length && run < ends.length; index++) {
+    const { start } = spans[index]
+    while (run < ends.length && ends[run] <= start) {
+      run++
+    }
+    if (run < ends.length && starts[run] <= start && text[starts[run]] !== '\\') {
+      solidSpans ??= []
+      solidSpans[index] = true
+    }
+  }
+  return solidSpans
+}
+
 /**
  * Property-name position is a ":" at `colonPosition` without the selector shape; selector position
  * is a ":" with it: starting at least one character after that ":", the nearest stop at code
@@ -605,7 +661,7 @@ function getSubstitution(context: {
         plainFill()
       )
     }
-    return fillPlaceholder(placeholderText, 'x')
+    return fillPlaceholder(placeholderText, SOLID_FILL)
   }
 
   /**
@@ -618,12 +674,12 @@ function getSubstitution(context: {
    */
   if (context.isPropertyNamePosition) {
     if (isCustomPropertyName(context.syntaxTextSinceBoundary)) {
-      return fillPlaceholder(placeholderText, 'x')
+      return fillPlaceholder(placeholderText, SOLID_FILL)
     }
     if (context.isJoinedToName) {
       return (
         wrapPlaceholder(placeholderText, { close: '}', open: '#{x' }) ??
-        fillPlaceholder(placeholderText, 'x')
+        fillPlaceholder(placeholderText, SOLID_FILL)
       )
     }
     return wrapPlaceholder(placeholderText, { open: '$a', padding: 'x' }) ?? plainFill()
@@ -638,7 +694,7 @@ function getSubstitution(context: {
    */
   if (context.isSelectorPosition) {
     return context.isJoinedToSelectorName
-      ? fillPlaceholder(placeholderText, 'x')
+      ? fillPlaceholder(placeholderText, SOLID_FILL)
       : (wrapPlaceholder(placeholderText, { open: '&' }) ?? plainFill())
   }
 
@@ -658,14 +714,10 @@ function getSubstitution(context: {
 
   /**
    * Placeholder used as a hex color value, right after "#", for example `color: #${1};`. Replaced
-   * with "000" (a valid 3-digit hex color) plus padding. The three digits must stay on one line to
-   * read as a hex color, so they cover the placeholder's first three characters even when a line
-   * terminator is among them.
+   * with "000" (a valid 3-digit hex color) plus padding.
    */
   if (context.followsHash) {
-    return placeholderText.length < HEX_FILL.length
-      ? plainFill()
-      : HEX_FILL + fillPlaceholder(placeholderText.slice(HEX_FILL.length), ' ')
+    return wrapPlaceholder(placeholderText, { open: HEX_FILL }) ?? plainFill()
   }
 
   /** Ordinary property value, for example `color: ${'red'};`. */
@@ -755,33 +807,22 @@ function isNormalized(textLength: number, spans: ReadonlyArray<SubstitutionSpan>
  * Builds the masked text from slices of `templateText` between spans plus a masked copy of each
  * span's own characters, so a long template with few placeholders pays for the placeholders'
  * length plus one slice per gap between them, never a per-character rewrite of the whole text.
- * `spans` come from normalizeSpans.
+ * `spans` come from normalizeSpans. Every span gets the solid fill.
  */
 function maskSubstitutions(templateText: string, spans: ReadonlyArray<SubstitutionSpan>): string {
   let result = ''
   let cursor = 0
-  for (const span of spans) {
-    result += templateText.slice(cursor, span.start)
-    result += fillPlaceholder(templateText.slice(span.start, span.end), 'x')
-    cursor = span.end
+  for (const { end, start } of spans) {
+    result += templateText.slice(cursor, start) + SOLID_FILL.repeat(end - start)
+    cursor = end
   }
   result += templateText.slice(cursor)
   return result
 }
 
-/**
- * Replaces every UTF-16 code unit of `placeholderText` with `replacementCharacter`, except a line
- * terminator, which is kept so a multi-line placeholder keeps its line count (docs/architecture.md,
- * substitution invariants). Indexed per code unit, not per code point (`for...of` would merge a
- * surrogate pair into one iteration step and lose a unit of output length).
- */
+/** `replacementCharacter` over every UTF-16 code unit of `placeholderText`, line terminators included. */
 function fillPlaceholder(placeholderText: string, replacementCharacter: string): string {
-  let result = ''
-  for (let index = 0; index < placeholderText.length; index++) {
-    const character = placeholderText[index]
-    result += isLineTerminator(character) ? character : replacementCharacter
-  }
-  return result
+  return replacementCharacter.repeat(placeholderText.length)
 }
 
 /**
@@ -795,35 +836,15 @@ function isCustomPropertyName(syntaxTextSinceBoundary: string): boolean {
 }
 
 /**
- * Same-length stand-in for `placeholderText`: `open`, then `padding` repeated, then `close`,
- * written in order over its characters other than line terminators, which stay where they are.
- * Undefined when the placeholder has fewer such characters than `open` and `close` together.
+ * Same-length stand-in for `placeholderText`: `open`, then `padding` repeated, then `close`.
+ * Undefined when the placeholder is shorter than `open` and `close` together.
  */
 function wrapPlaceholder(
   placeholderText: string,
   { close = '', open, padding = ' ' }: { close?: string; open: string; padding?: string },
 ): string | undefined {
-  let slotCount = 0
-  for (let index = 0; index < placeholderText.length; index++) {
-    slotCount += isLineTerminator(placeholderText[index]) ? 0 : 1
-  }
-  const closeStart = slotCount - close.length
-  if (closeStart < open.length) {
-    return undefined
-  }
-  let result = ''
-  let slot = 0
-  for (let index = 0; index < placeholderText.length; index++) {
-    const character = placeholderText[index]
-    if (isLineTerminator(character)) {
-      result += character
-      continue
-    }
-    result +=
-      slot < open.length ? open[slot] : slot >= closeStart ? close[slot - closeStart] : padding
-    slot++
-  }
-  return result
+  const paddingLength = placeholderText.length - open.length - close.length
+  return paddingLength < 0 ? undefined : open + padding.repeat(paddingLength) + close
 }
 
 /** A character right before a selector placeholder that makes the placeholder part of a name: `.${a}`, `#${a}`, `&${a}`, `:${a}`. */

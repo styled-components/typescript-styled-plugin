@@ -333,6 +333,49 @@ function buildStatementPlaceholderCase(count: number): TextCase {
   })
 }
 
+const MULTI_LINE_PLACEHOLDER = '${\n  a\n}'
+const SOLID_MULTI_LINE_FILL = 'x'.repeat(MULTI_LINE_PLACEHOLDER.length)
+
+/** `count` copies of `unit`, each MULTI_LINE_PLACEHOLDER in it a span. */
+function repeatMultiLineUnit(count: number, unit: string, expectedUnit: string): TextCase {
+  const text = unit.repeat(count)
+  return {
+    expected: expectedUnit.repeat(count),
+    spans: offsetsOf(text, MULTI_LINE_PLACEHOLDER).map((start) => ({
+      end: start + MULTI_LINE_PLACEHOLDER.length,
+      start,
+    })),
+    text,
+  }
+}
+
+/**
+ * A multi-line placeholder inside a quoted string, then another inside an unquoted url() argument,
+ * repeated: every placeholder takes the solid fill, found by one walk of the spans against the
+ * runs, never a search per placeholder.
+ */
+function buildStringAndUrlMultilinePlaceholderCase(count: number): TextCase {
+  return repeatMultiLineUnit(
+    count,
+    `content: "${MULTI_LINE_PLACEHOLDER}"; background: url(${MULTI_LINE_PLACEHOLDER}); `,
+    `content: "${SOLID_MULTI_LINE_FILL}"; background: url(${SOLID_MULTI_LINE_FILL}); `,
+  )
+}
+
+/**
+ * A multi-line placeholder inside a quoted string, then one at code as a mixin on the same line
+ * (whitespace, where a solid fill would be x's), repeated: solid and classified placeholders
+ * alternate, so the walk of the spans against the runs must keep its place between them instead of
+ * starting over per placeholder.
+ */
+function buildStringAndCodeMultilinePlaceholderCase(count: number): TextCase {
+  return repeatMultiLineUnit(
+    count,
+    `content: "${MULTI_LINE_PLACEHOLDER}"; ${MULTI_LINE_PLACEHOLDER} `,
+    `content: "${SOLID_MULTI_LINE_FILL}"; ${' '.repeat(MULTI_LINE_PLACEHOLDER.length)} `,
+  )
+}
+
 interface TextCheckCase {
   readonly build: (count: number) => TextCase
   readonly label: string
@@ -505,6 +548,14 @@ const substitutionCases: readonly TextCheckCase[] = [
       return { ...textCase, spans: textCase.spans.toReversed() }
     },
     label: 'block-position placeholders, spans given in reverse order',
+  },
+  {
+    build: buildStringAndUrlMultilinePlaceholderCase,
+    label: 'multi-line placeholders inside strings and url() arguments',
+  },
+  {
+    build: buildStringAndCodeMultilinePlaceholderCase,
+    label: 'multi-line placeholders alternating between strings and code',
   },
 ]
 
@@ -751,6 +802,33 @@ function defineCompletionCheck({
   })
 }
 
+/**
+ * `ruleCount` rules, each holding a multi-line placeholder as a margin value, then `color:` on its
+ * own last line. Every placeholder loses its own line breaks in the substituted virtual document
+ * (docs/architecture.md, substitution invariants), unlike createLargeTemplate's completion cases
+ * above, which hold no placeholder at all: withTemplateLineBreaks must realign many lines here, so
+ * its early return (every template line already ends in "\n") never applies, unlike those cases.
+ */
+function createManyMultilinePlaceholdersTemplate(ruleCount: number): {
+  spans: TemplateSpan[]
+  text: string
+} {
+  const unit = `.rule- { margin: ${MULTI_LINE_PLACEHOLDER}; color: red; }\n`
+  const text = unit.repeat(ruleCount) + 'color:'
+  return {
+    spans: offsetsOf(text, MULTI_LINE_PLACEHOLDER).map((start) => ({
+      end: start + MULTI_LINE_PLACEHOLDER.length,
+      start,
+    })),
+    text,
+  }
+}
+
+const manyMultilinePlaceholdersContextForSize = cachedBySize((size) => {
+  const { spans, text } = createManyMultilinePlaceholdersTemplate(size)
+  return createTemplateContext(text, spans)
+})
+
 /** Inside the first rule's selector `.rule-0` of a diagnostics template. */
 const HOVER_POSITION: ts.LineAndCharacter = { character: 1, line: 0 }
 const HOVERED_SELECTOR = '.rule-0'
@@ -820,6 +898,21 @@ const checks: readonly ScalingCheck[] = [
     },
   }),
   ...completionCases.map(defineCompletionCheck),
+  defineCheck({
+    n: COMPLETIONS_CHECK_N,
+    name: 'completions on a large template with many multi-line placeholders',
+    run: (size) => completionsAtEnd(manyMultilinePlaceholdersContextForSize(size)),
+    verify(completions) {
+      const names = entryNames(completions)
+      if (names.includes('red')) {
+        return undefined
+      }
+      return {
+        expected: 'a "red" entry among the color value completions',
+        received: `${names.length} entries, first ${JSON.stringify(names.slice(0, 5))}`,
+      }
+    },
+  }),
   defineCheck({
     n: DIAGNOSTICS_TEMPLATE_CHECK_N,
     name: 'code fixes',

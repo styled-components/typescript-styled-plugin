@@ -140,9 +140,13 @@ export class CompletionsFeature {
       this.virtualDocumentSessionProvider.getParsedDocument(context)
     const virtualPosition = this.virtualDocumentProvider.toVirtualDocPosition(position)
     const configuration = this.getConfiguration()
+    const templateStart = this.virtualDocumentProvider.toVirtualDocOffset(0, context)
     const emmetItems =
-      this.emmetCompletionProvider.doComplete(document, virtualPosition, configuration.emmet)
-        ?.items ?? []
+      this.emmetCompletionProvider.doComplete(
+        withTemplateLineBreaks(document, lineMap, templateStart),
+        virtualPosition,
+        configuration.emmet,
+      )?.items ?? []
     const text = document.getText()
     const caretOffset = document.offsetAt(virtualPosition)
     const caretPlacement = findCaretPlacement(
@@ -160,11 +164,7 @@ export class CompletionsFeature {
         this.scssLanguageService.doComplete(document, virtualPosition, stylesheet).items,
       ),
     ]
-    const atKeywordRange = findStatementAtKeywordRange(
-      text,
-      caretOffset,
-      this.virtualDocumentProvider.toVirtualDocOffset(0, context),
-    )
+    const atKeywordRange = findStatementAtKeywordRange(text, caretOffset, templateStart)
     if (atKeywordRange) {
       const labels = new Set(items.map((item) => item.label))
       const range = {
@@ -345,6 +345,37 @@ function startsWithAtKeyword(text: string, from: number, to: number): boolean {
     index = commentEnd
   }
   return false
+}
+
+/**
+ * `document` with "\n" written over the last character of every template line, for Emmet, which
+ * reads the caret's line from the text between "\n" characters (`getCurrentLine`,
+ * @vscode/emmet-helper) while positions follow the template's own lines (docs/architecture.md,
+ * Completions). An overwrite, not an insert, so the view keeps the document's length and offsets;
+ * the overwritten character is always the template's line terminator, a fill character, or a space
+ * an escape stand-in wrote, never CSS the user typed. `document` itself when every template line
+ * already ends in "\n" there.
+ */
+export function withTemplateLineBreaks(
+  document: TextDocument,
+  { lineStarts }: TemplateLineMap,
+  templateStart: number,
+): TextDocument {
+  const text = document.getText()
+  let aligned = ''
+  let cursor = 0
+  for (let line = 1; line < lineStarts.length; line++) {
+    const lineEnd = templateStart + lineStarts[line] - 1
+    if (text[lineEnd] !== '\n') {
+      aligned += `${text.slice(cursor, lineEnd)}\n`
+      cursor = lineEnd + 1
+    }
+  }
+  if (cursor === 0) {
+    return document
+  }
+  aligned += text.slice(cursor)
+  return TextDocument.create(document.uri, document.languageId, document.version, aligned)
 }
 
 /**
