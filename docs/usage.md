@@ -206,7 +206,7 @@ settings do not cause a host failure.
 | `compatibleVendorPrefixes`        | Missing related vendor-prefixed properties.                         | `ignore`  |
 | `vendorPrefix`                    | Vendor-prefixed properties without a standard equivalent.           | `warning` |
 | `duplicateProperties`             | Duplicate style declarations.                                       | `ignore`  |
-| `emptyRules`                      | Empty rulesets.                                                     | `ignore`  |
+| `emptyRules`                      | Provably empty rulesets; body interpolations are not reported.      | `ignore`  |
 | `importStatement`                 | `@import` statements.                                               | `ignore`  |
 | `boxModel`                        | Width or height used with padding or borders.                       | `ignore`  |
 | `universalSelector`               | Universal selectors.                                                | `ignore`  |

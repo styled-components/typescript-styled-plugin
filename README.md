@@ -181,20 +181,39 @@ Add the following to `~/.config/helix/languages.toml`, replacing
 `/usr/local/lib/node_modules` with the exact output of `npm root -g`:
 
 ```toml
-[language-server.typescript-language-server]
-command = "typescript-language-server"
-args = ["--stdio"]
+[language-server.typescript-language-server.config]
+hostInfo = "helix"
 
 [[language-server.typescript-language-server.config.plugins]]
 name = "@styled/typescript-styled-plugin"
 location = "/usr/local/lib/node_modules"
+
+[language-server.typescript-language-server.config.typescript.inlayHints]
+includeInlayEnumMemberValueHints = true
+includeInlayFunctionLikeReturnTypeHints = true
+includeInlayFunctionParameterTypeHints = true
+includeInlayParameterNameHints = "all"
+includeInlayParameterNameHintsWhenArgumentMatchesName = true
+includeInlayPropertyDeclarationTypeHints = true
+includeInlayVariableTypeHints = true
+
+[language-server.typescript-language-server.config.javascript.inlayHints]
+includeInlayEnumMemberValueHints = true
+includeInlayFunctionLikeReturnTypeHints = true
+includeInlayFunctionParameterTypeHints = true
+includeInlayParameterNameHints = "all"
+includeInlayParameterNameHintsWhenArgumentMatchesName = true
+includeInlayPropertyDeclarationTypeHints = true
+includeInlayVariableTypeHints = true
 ```
 
-The `location` is the folder containing the scoped `@styled` package, not the
-plugin package or its `lib` folder. Run `hx --health typescript` to confirm
-that Helix finds `typescript-language-server`. Version 6 of that language
-server requires Node.js 22.22.2 or newer, which is stricter than this plugin's
-own Node.js requirement.
+Keep the complete `config` table shown above so adding the plugin does not drop
+Helix's built-in initialization options. For this global setup, use the exact
+`npm root -g` output as `location`. Run `hx --health typescript` to confirm that
+Helix finds `typescript-language-server`. The setup and host requirements were
+verified with Helix 25.07.1 and `typescript-language-server` 6.0.1; see the
+[host notes](docs/tsserver-host.md) for the version-specific details, and
+validate them against the installed versions.
 
 To change [plugin settings](docs/usage.md), add the plugin's entry to
 `compilerOptions.plugins` in `tsconfig.json` as in the

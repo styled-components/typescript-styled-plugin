@@ -1,6 +1,6 @@
 # tsserver host knowledge
 
-Verified facts about the environment this plugin runs in. Dated 2026-09-26; each item names the version it was checked against. Re-verify before relying on an item older than a few months.
+Verified facts about the environment this plugin runs in. Updated 2026-09-28; each item names the version it was checked against. Re-verify before relying on an item older than a few months.
 
 ## How tsserver loads a plugin
 
@@ -16,7 +16,7 @@ Verified facts about the environment this plugin runs in. Dated 2026-09-26; each
 - `typescript@latest` on npm is 7.0.2, the native compiler. The package ships no `tsserver` and has no plugin API; VS Code's TypeScript 7 mode does not load `typescriptServerPlugins`. Plugins run only on TypeScript 5.x and 6.x hosts; an older host can still load the plugin module itself without erroring, since this plugin's own version gate (below) returns the host's language service untouched rather than activating.
 - VS Code stable bundles TypeScript 6 (`npm:@typescript/typescript6`).
 - Floor for this plugin: TypeScript 5.0 (`major >= 5`, `isSupportedTypeScriptVersion`, `src/tsserver/tsserver-plugin.ts`). 1.0.1 gates on `major >= 3`, but `typescript-template-language-service-decorator` 2.3.2 (the last release) binds `languageService.getSupportedCodeFixes` whenever the template service passed to it implements the same method, regardless of host version; that instance method exists on `ts.LanguageService` only from TypeScript 5.0 (confirmed via `ts.createLanguageService(...).getSupportedCodeFixes` returning `undefined` on 3.9, 4.0, 4.4, and 4.9, and a function from 5.0), so binding it on an older host throws `TypeError: Cannot read properties of undefined (reading 'bind')` before any feature activates. Reproduced against a real tsserver on TypeScript 3.9, 4.0, 4.4, and 4.9 with the published decorator's own logged message: "Plugin activation failed: TypeError: Cannot read properties of undefined (reading 'bind')". 1.0.1 crashes identically on these versions today, since a fresh install resolves the same final decorator release. This plugin's own gate never constructs the decorator below TypeScript 5.0, logging "Unsupported TypeScript version ... TypeScript 5.0 or newer required" and returning the host's own language service untouched instead of crashing there.
-- Line terminators: `ts.computeLineStarts` starts a new line after `\r\n`, a lone `\n`, a lone `\r`, U+2028, and U+2029, and not after U+0085. Checked on TypeScript 4.9.5, 5.0.4, 5.9.3, and 6.0.3 (`computeLineStarts("a\r\nb\nc\rd e f\u0085g")` returns `[0,3,5,7,9,11]` on each).
+- Line terminators: `ts.computeLineStarts` starts a new line after `\r\n`, a lone `\n`, a lone `\r`, U+2028, and U+2029, and not after U+0085. Checked on TypeScript 4.9.5, 5.0.4, 5.9.3, and 6.0.3 (`computeLineStarts("a\r\nb\nc\rd\u2028e\u2029f\u0085g")` returns `[0,3,5,7,9,11]` on each).
 - A declaration file using a string export name (`export { x as 'module.exports' }`) fails to parse (TS1003) on TypeScript 5.0 through 5.5; 5.6 accepts it. This package no longer emits that syntax anywhere (the root entry's declaration uses `export =`, parseable since TypeScript's earliest CommonJS-module support); kept here as the reason a future root-entry declaration should avoid the string-export-name form.
 
 ## Node runtime for the tsserver plugin and the `./api` subpath
@@ -27,6 +27,7 @@ Verified facts about the environment this plugin runs in. Dated 2026-09-26; each
 - `require()` of an ES module throws `ERR_REQUIRE_ASYNC_MODULE` if the module graph uses top-level `await`. Keep the `lib/esm/api.mjs` bundle free of it.
 - `export { value as 'module.exports' }` sets what `require()` of an ES module returns; named exports are then invisible to CommonJS callers. Not used by this package (see the TypeScript-versions note above); documented here because `require(esm)` interop depends on it.
 - Host runtimes: VS Code and Cursor run tsserver on their Electron Node (24.x in 2026). `typescript-language-server` 6.0.1 requires Node 22.22.2 or newer. `@vtsls/language-server` declares Node 18 or newer, so a vtsls user on an older system Node cannot load the plugin. `typescript.tsserver.nodePath` in VS Code substitutes the user's Node.
+- Helix plugin setup (Helix 25.07.1 and `typescript-language-server` 6.0.1, checked 2026-09-28): Helix merges `languages.toml` through three table levels, so a user-provided `language-server.typescript-language-server.config` replaces that server's built-in `config` table. A plugin example must repeat the built-in `hostInfo` and TypeScript/JavaScript inlay-hint settings to preserve them. `typescript-language-server` passes each initialization plugin's `location` directly to tsserver through `--pluginProbeLocations`; its documentation permits either the package path or a directory from which Node can require the plugin name.
 
 ## Dependencies
 
