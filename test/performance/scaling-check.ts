@@ -666,9 +666,25 @@ function createLayerDiagnosticsTemplate(layerCount: number): string {
   ).join('\n')
 }
 
+function createInterpolatedEmptyRulesContext(rulePairCount: number): TemplateContext {
+  const placeholder = '${mixin}'
+  const text = Array.from(
+    { length: rulePairCount },
+    (_, index) => `.interpolated-${index} { ${placeholder} }\n.empty-${index} {}`,
+  ).join('\n')
+  return createTemplateContext(
+    text,
+    offsetsOf(text, placeholder).map((start) => ({
+      end: start + placeholder.length,
+      start,
+    })),
+  )
+}
+
 const MISSPELLED_PROPERTY = 'colr'
 const diagnosticsContextForSize = contextForSize(createDiagnosticsTemplate)
 const foldingContextForSize = contextForSize(createFoldingTemplate)
+const interpolatedEmptyRulesContextForSize = cachedBySize(createInterpolatedEmptyRulesContext)
 
 interface DiagnosticsCheckCase {
   readonly context: (size: number) => TemplateContext
@@ -858,6 +874,19 @@ const checks: readonly ScalingCheck[] = [
     ),
   ),
   ...diagnosticsCases.map(defineDiagnosticsCheck),
+  defineCheck({
+    n: DIAGNOSTICS_TEMPLATE_CHECK_N,
+    name: 'diagnostics (many interpolated and genuinely empty rules)',
+    run: (size) =>
+      createTemplateLanguageService({ lint: { emptyRules: 'error' } }).getSemanticDiagnostics(
+        interpolatedEmptyRulesContextForSize(size),
+      ),
+    verify: (diagnostics, size) =>
+      compareOffsets(
+        offsetsOf(interpolatedEmptyRulesContextForSize(size).rawText, '.empty-'),
+        diagnostics.map((diagnostic) => diagnostic.start),
+      ),
+  }),
   defineCheck({
     n: FOLDING_CHECK_N,
     name: 'folding (many spans)',

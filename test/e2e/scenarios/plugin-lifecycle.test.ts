@@ -186,6 +186,25 @@ describe.concurrent('Plugin lifecycle', () => {
     ])
   })
 
+  it('should not report an empty ruleset when its content is an interpolation (#4)', async (context) => {
+    const server = startServer(context)
+    const source = mark(
+      [
+        'declare const mixin: string;',
+        'const interpolated = css`⟨interpolated⟩a⟨/interpolated⟩ { ${mixin} }`;',
+        'const empty = css`⟨empty⟩b⟨/empty⟩ {}`;',
+      ].join('\n'),
+    )
+    const file = server.open(source.text)
+
+    await server.configurePlugin({ lint: { emptyRules: 'error' } })
+    const diagnostics = pluginDiagnostics(await server.request('semanticDiagnosticsSync', { file }))
+
+    assert.deepEqual(spansAndText(diagnostics), [
+      { ...source.range('empty'), text: 'Do not use empty rulesets' },
+    ])
+  })
+
   it('should apply and reset valid CSS properties through plugin configuration', async (context) => {
     const server = startServer(context)
     const source = mark('const q = css`⟨property⟩brand-tone⟨/property⟩: red;`')

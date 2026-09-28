@@ -1,7 +1,10 @@
 import type { TemplateContext } from 'typescript-template-language-service-decorator'
 import * as ts from 'typescript/lib/tsserverlibrary.js'
 
-import { PluginConfigurationManager } from '../../src/configuration/plugin-configuration.ts'
+import {
+  PluginConfigurationManager,
+  type StyledPluginConfigurationInput,
+} from '../../src/configuration/plugin-configuration.ts'
 import { StyledTemplateLanguageService } from '../../src/template-language-service.ts'
 import { getTemplateSubstitutions } from '../../src/template/template-substitutions.ts'
 import { StyledVirtualDocumentProvider } from '../../src/virtual-document/styled-virtual-document-provider.ts'
@@ -12,10 +15,16 @@ export interface TemplateSpan {
   readonly start: number
 }
 
-export function createTemplateLanguageService(): StyledTemplateLanguageService {
+export function createTemplateLanguageService(
+  configuration?: StyledPluginConfigurationInput,
+): StyledTemplateLanguageService {
+  const configurationManager = new PluginConfigurationManager()
+  if (configuration !== undefined) {
+    configurationManager.updateFromPluginConfig(configuration)
+  }
   return new StyledTemplateLanguageService(
     ts,
-    new PluginConfigurationManager(),
+    configurationManager,
     new StyledVirtualDocumentProvider(ts),
   )
 }
