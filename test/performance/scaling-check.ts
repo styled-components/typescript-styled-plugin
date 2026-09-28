@@ -379,6 +379,7 @@ function buildStringAndCodeMultilinePlaceholderCase(count: number): TextCase {
 interface TextCheckCase {
   readonly build: (count: number) => TextCase
   readonly label: string
+  readonly n?: number
 }
 
 /** Each case is timed through getTemplateSubstitutions with its text and spans. */
@@ -436,6 +437,8 @@ const substitutionCases: readonly TextCheckCase[] = [
     build: (count) =>
       repeatUnit({ count, expectedUnit: 'xxxxxx ', prefix: '/* ', suffix: '*/', unit: '${aaa} ' }),
     label: 'placeholders inside one block comment',
+    /** Keeps the N sample several ticks above coarse Linux thread CPU clock resolution. */
+    n: 48_000,
   },
   /**
    * Every placeholder's name scan reaches the same name end, which must be found once, not once
@@ -603,10 +606,11 @@ function defineTextCheck(
   name: string,
   build: (count: number) => TextCase,
   transform: (textCase: TextCase) => string,
+  n = SUBSTITUTION_CHECK_N,
 ): ScalingCheck {
   const caseForSize = cachedBySize(build)
   return defineCheck({
-    n: SUBSTITUTION_CHECK_N,
+    n,
     name,
     run: (size) => transform(caseForSize(size)),
     verify: (result, size) => compareText(caseForSize(size).expected, result),
@@ -863,14 +867,20 @@ const manyTemplateContextsForSize = cachedBySize((size) =>
 )
 
 const checks: readonly ScalingCheck[] = [
-  ...substitutionCases.map(({ build, label }) =>
-    defineTextCheck(`substitution (${label})`, build, ({ spans, text }) =>
-      getTemplateSubstitutions(text, spans),
+  ...substitutionCases.map(({ build, label, n }) =>
+    defineTextCheck(
+      `substitution (${label})`,
+      build,
+      ({ spans, text }) => getTemplateSubstitutions(text, spans),
+      n,
     ),
   ),
-  ...escapeCases.map(({ build, label }) =>
-    defineTextCheck(`JavaScript escape replacement (${label})`, build, ({ text }) =>
-      replaceJavaScriptEscapes(text),
+  ...escapeCases.map(({ build, label, n }) =>
+    defineTextCheck(
+      `JavaScript escape replacement (${label})`,
+      build,
+      ({ text }) => replaceJavaScriptEscapes(text),
+      n,
     ),
   ),
   ...diagnosticsCases.map(defineDiagnosticsCheck),
