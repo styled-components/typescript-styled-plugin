@@ -43,8 +43,8 @@ Add the plugin to the project `tsconfig.json` or `jsconfig.json`:
 ```
 
 The editor must be configured to use that workspace TypeScript SDK, or, in
-Neovim, load the plugin as a global plugin. VS Code, Sublime Text, Neovim, and
-Visual Studio setup paths are described in the
+Neovim or Helix, load the plugin as a global plugin. VS Code, Sublime Text,
+Neovim, Helix, and Visual Studio setup paths are described in the
 [README](../README.md#editor-integration); each requires validation against
 the actual editor's tsserver host and Node runtime.
 

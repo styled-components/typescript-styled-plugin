@@ -59,7 +59,19 @@ properties, and Emmet completions.
 
 ## Editor Integration
 
+The plugin can be loaded in two ways:
+
+- **Project-local:** Install it in the project and add it to
+  `compilerOptions.plugins` in `tsconfig.json`.
+- **Editor-global:** Install or bundle it once, then configure the editor's
+  TypeScript host to load it for every project. This adds no dependency or
+  configuration to each project.
+
+The available loading modes depend on the editor integration below.
+
 ### With VS Code
+
+**Loading mode: editor-global, with a project-local alternative.**
 
 Install the [VS Code Styled Components extension](https://github.com/styled-components/vscode-styled-components).
 It bundles this plugin and works with VS Code's bundled TypeScript version
@@ -78,6 +90,8 @@ use.
 
 ### With Sublime Text
 
+**Loading mode: project-local.**
+
 This plugin works with the [Sublime TypeScript plugin](https://github.com/Microsoft/TypeScript-Sublime-Plugin).
 Complete the [Quick Start](#quick-start), then point Sublime at the workspace
 TypeScript version by setting
@@ -93,6 +107,8 @@ This setup path requires validation against the Sublime TypeScript plugin and
 its bundled Node runtime; that runtime must meet the requirements above.
 
 ### With Neovim
+
+**Loading mode: editor-global, with a project-local alternative.**
 
 Neovim talks to tsserver through a language server that wraps it. Two of them
 load tsserver plugins without a `plugins` entry in `tsconfig.json`: install
@@ -147,7 +163,50 @@ have the server use the workspace TypeScript version (for vtsls, set
 `vtsls.autoUseWorkspaceTsdk` to `true`). The tsserver host must meet the
 requirements above.
 
+### With Helix
+
+**Loading mode: editor-global, with a project-local alternative.**
+
+Helix uses
+[typescript-language-server](https://github.com/typescript-language-server/typescript-language-server)
+for TypeScript and JavaScript by default. Install the server, TypeScript, and
+this plugin globally, then print npm's global package folder:
+
+```bash
+npm install --global typescript-language-server typescript@6 @styled/typescript-styled-plugin
+npm root -g
+```
+
+Add the following to `~/.config/helix/languages.toml`, replacing
+`/usr/local/lib/node_modules` with the exact output of `npm root -g`:
+
+```toml
+[language-server.typescript-language-server]
+command = "typescript-language-server"
+args = ["--stdio"]
+
+[[language-server.typescript-language-server.config.plugins]]
+name = "@styled/typescript-styled-plugin"
+location = "/usr/local/lib/node_modules"
+```
+
+The `location` is the folder containing the scoped `@styled` package, not the
+plugin package or its `lib` folder. Run `hx --health typescript` to confirm
+that Helix finds `typescript-language-server`. Version 6 of that language
+server requires Node.js 22.22.2 or newer, which is stricter than this plugin's
+own Node.js requirement.
+
+To change [plugin settings](docs/usage.md), add the plugin's entry to
+`compilerOptions.plugins` in `tsconfig.json` as in the
+[Quick Start](#quick-start); the global plugin registration still supplies the
+implementation. To use a copy installed in the project instead, install
+`typescript-language-server` globally, then complete the Quick Start in the
+project. No `plugins` entry in Helix's `languages.toml` is needed for this
+project-local setup.
+
 ### With Visual Studio
+
+**Loading mode: project-local.**
 
 This setup path requires validation against the installed Visual Studio
 TypeScript Server host and runtime. Complete the [Quick Start](#quick-start) in

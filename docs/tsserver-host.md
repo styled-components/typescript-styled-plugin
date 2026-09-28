@@ -26,7 +26,7 @@ Verified facts about the environment this plugin runs in. Dated 2026-09-26; each
 - `./api` is a real dual build: `import` gets `lib/esm/api.mjs`, `require` gets `lib/esm/api.cjs`, a genuine CommonJS bundle. Measured with the packed tarball's `./api`, both `require()` and `import()` succeed on Node 14.21.3, 16.20.2, 18.20.5, 20.18.1, 22.12.0, and 24.11.0 (the same Node floor as the package root, with no `require(esm)` dependency).
 - `require()` of an ES module throws `ERR_REQUIRE_ASYNC_MODULE` if the module graph uses top-level `await`. Keep the `lib/esm/api.mjs` bundle free of it.
 - `export { value as 'module.exports' }` sets what `require()` of an ES module returns; named exports are then invisible to CommonJS callers. Not used by this package (see the TypeScript-versions note above); documented here because `require(esm)` interop depends on it.
-- Host runtimes: VS Code and Cursor run tsserver on their Electron Node (24.x in 2026). `typescript-language-server` requires Node 22.22 or newer. `@vtsls/language-server` declares Node 18 or newer, so a vtsls user on an older system Node cannot load the plugin. `typescript.tsserver.nodePath` in VS Code substitutes the user's Node.
+- Host runtimes: VS Code and Cursor run tsserver on their Electron Node (24.x in 2026). `typescript-language-server` 6.0.1 requires Node 22.22.2 or newer. `@vtsls/language-server` declares Node 18 or newer, so a vtsls user on an older system Node cannot load the plugin. `typescript.tsserver.nodePath` in VS Code substitutes the user's Node.
 
 ## Dependencies
 
