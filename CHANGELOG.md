@@ -1,5 +1,77 @@
 # Changelog
 
+## 1.1.0
+
+### Minor Changes
+
+- 9bdd306: `@styled/typescript-styled-plugin/api` is now a public export for both `require()` and `import()`, and the deep `lib/api` imports keep working. It adds types for building configuration by hand and for injecting custom language services. Lint settings accept `unknownAtRules`, and `globalCss` (Pigment CSS) is a default tag. 1.0.1's private underscore-prefixed modules are not included.
+
+  Thanks to @usercao for the modernization work most of this release builds on.
+
+- 9bdd306, e13d896: On TypeScript older than 5.0, which the plugin does not support, the TypeScript server log now says that TypeScript 5.0 or newer is required, instead of showing an unexplained activation error.
+
+  Thanks usercao!
+
+### Patch Changes
+
+- 9bdd306: Mixin interpolations that share a line with other CSS, such as `color: red; ${mixin}`, and values split across lines no longer report false `colon expected` or `semi-colon expected` errors.
+
+  Thanks usercao!
+
+- 9bdd306: Completions now follow plugin configuration changes without a restart. A completion or code fix whose edit would land outside the template is dropped instead of producing a broken edit.
+
+  Thanks usercao!
+
+- 9bdd306: Invalid or misspelled plugin settings are now reported in the TypeScript server log, naming the setting, what it accepts, and the closest match, instead of being ignored silently. Common spellings such as `"off"`, `"warn"`, and `"Error"` for lint levels are now accepted.
+
+  Thanks usercao!
+
+- 9bdd306: Errors are placed more accurately and appear in more cases:
+
+  - Errors at the end of a template, such as an unclosed block, point inside the template instead of past its closing backtick, and an unclosed block can be folded.
+  - A stray `}` or `;` is always reported, underlined where it is written.
+  - Diagnostics work for files not open in the editor.
+  - Templates containing U+2028 or U+2029 line separators map positions correctly.
+  - A `;` or `}` inside a comment or an unquoted `url()` no longer causes a false `colon expected`.
+  - `styled.keyframes` templates are checked as keyframes.
+  - Code-fix requests for other error codes no longer return the plugin's fixes.
+  - `getTemplateSettings().getSubstitutions` from `./api` keeps its output the same length as its input for any spans.
+
+  Thanks usercao!
+
+- 9bdd306: Diagnostics and hover are faster in large files and in templates with many interpolations. Results for unchanged templates are reused across requests, using at most 4 MB of memory per project.
+
+  Thanks usercao!
+
+- 9bdd306, e13d896: Emmet no longer offers whole declarations where none fit, such as inside a value: typing `display: fl` used to offer `float: left;`. Completions no longer appear inside CSS comments and strings, and an empty template now offers property suggestions. Emmet suggestions now also appear on a line that starts after a lone carriage return, a line continuation, or a line separator inside a string.
+
+  Thanks usercao!
+
+- 9bdd306: Interpolations in property names (`padding-${side}: 4px;`), at-rule conditions (`@media screen and ${query} {`), selectors (`&.${className}:hover {`), and keyframe percentages (`${step}% {`) no longer report false errors, including when a nearby comment or string holds a `;` or `{`, or a comment sits before the `{` or `:`. 1.0.1 reported these errors as well.
+
+  Thanks usercao!
+
+- 9bdd306: Templates are checked as the CSS styled-components actually receives, with JavaScript escapes such as `\"`, `\n`, and `\x41` read as the characters they stand for. Escapes in strings, names, and `url()` no longer report false errors, and an error on an escaped name underlines the whole escape. 1.0.1 reported these errors as well.
+
+  Thanks usercao!
+
+- e13d896: Interpolations written across several lines are now checked the same as when written on one line, removing false errors and wrong completions when one sits in a property name, an at-rule such as `@media` or `@keyframes`, a `url()`, a quoted string, or a comment. An interpolation inside `url()` followed by more text, such as `url(#${id}-grad)`, no longer reports a false error either. 1.0.1 reported these errors as well.
+- 9bdd306: Typing `@` inside a component now suggests the at-rules that work there, such as `@media`, `@container`, `@layer`, and `@keyframes`, with their documentation.
+
+  Thanks usercao!
+
+- 9bdd306: A `@layer` block with declarations directly inside a component, such as `@layer utilities { color: red; }`, no longer reports a false `{ expected`. A component and a global style with the same text no longer share results.
+
+  Thanks usercao!
+
+- 9bdd306: An unexpected error inside the plugin, or malformed plugin configuration, is logged instead of failing the editor's whole response for the file, so TypeScript's own diagnostics and completions keep working.
+
+  Thanks usercao!
+
+- 9bdd306: A `css` fragment holding a single value, such as `` css`1px solid red` ``, is checked as a value instead of reporting a false `} expected`, and offers value completions.
+
+  Thanks usercao!
+
 ## 1.0.1 - December 11, 2023
 
 - Add support for `@container` queries by updating the CSS language service
