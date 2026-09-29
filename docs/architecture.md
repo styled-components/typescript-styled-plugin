@@ -105,7 +105,7 @@ Spec for how the plugin turns a tsserver request inside a tagged template into a
 - Stray closing brace: `css-ruleorselectorexpected` ("at-rule or selector expected") at the template end reports the wrapper's own closing brace, which the template's content closed early.
   - Causes: a stray `}`, or an unattached `;`. An empty template reports nothing.
   - Always kept: never dropped because another diagnostic exists in the template (an unrelated lint warning, or one from the brace's own cascade).
-  - Re-anchored to the stray `}`: the first `}` in the template's CSS text (`getTemplateCssText`) with no matching opener, read with the boundary scanner, so a `}` in a string, comment, escape, or unquoted `url(...)` argument does not count; no placeholder fill holds a brace. The span is that one character.
+  - Re-anchored to the stray `}`: the first `}` in the template's CSS text (`getTemplateCssText`) with no matching opener, read after JavaScript escapes are cooked, so a JavaScript escape can contribute a structural brace. The boundary scanner ignores a `}` in a string, comment, CSS escape, or unquoted `url(...)` argument; no placeholder fill holds a brace. The span is that one character.
   - No stray `}` (an unattached `;`): stays at the template end, zero length.
   - The same code anywhere else in the template is a real diagnostic and stays where reported. Other end-of-template diagnostics (`} expected`, `property value expected`) carry other codes and stay.
 

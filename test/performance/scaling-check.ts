@@ -35,6 +35,7 @@ import {
   createProgressLocationTracker,
   parseFilterArgument,
   selectChecks,
+  selectMinimumPositiveSample,
   type StageOrLineProgress,
 } from './scaling-check-cli.ts'
 import {
@@ -50,12 +51,12 @@ import {
 
 /**
  * Guardrail against superlinear regressions in a hot operation. Times each check at N and 4N,
- * taking the minimum of RUNS_PER_SIZE runs per size to filter scheduler and GC noise, then fails
- * when time(4N)/time(N) exceeds SCALING_THRESHOLD. At 4x the input a linear operation's ratio lands
- * near 4 (its fixed per-call cost pulls it lower) and a quadratic one's near 16. Every check's N is
- * sized so a quadratic regression injected into its path lands at 10 or more (SUBSTITUTION_CHECK_N
- * and the sizes after it), so 7 gives a linear operation's noisy readings 75% headroom above 4 while
- * staying clearly under where a real regression lands.
+ * taking the minimum positive sample from RUNS_PER_SIZE runs per size to filter scheduler, GC, and
+ * coarse-clock noise, then fails when time(4N)/time(N) exceeds SCALING_THRESHOLD. At 4x the input a
+ * linear operation's ratio lands near 4 (its fixed per-call cost pulls it lower) and a quadratic
+ * one's near 16. Every check's N is sized so a quadratic regression injected into its path lands at
+ * 10 or more (SUBSTITUTION_CHECK_N and the sizes after it), so 7 gives a linear operation's noisy
+ * readings 75% headroom above 4 while staying clearly under where a real regression lands.
  */
 const SCALING_THRESHOLD = 7
 /**
@@ -160,8 +161,8 @@ interface CheckResult {
 /**
  * Every timing is main-thread CPU time, not wall-clock time. With more runnable threads than cores,
  * the scheduler preempts the process every few milliseconds: a short N sample often runs
- * uninterrupted while a 4N sample several times longer almost never does, so the minimum over
- * several wall-clock samples inflates only the 4N side and pushes a linear operation past
+ * uninterrupted while a 4N sample several times longer almost never does, so the minimum positive
+ * sample over several wall-clock readings inflates only the 4N side and pushes a linear operation past
  * SCALING_THRESHOLD. Time spent preempted never counts as CPU time.
  */
 function elapsedCpuMs(start: NodeJS.CpuUsage): number {
@@ -379,7 +380,6 @@ function buildStringAndCodeMultilinePlaceholderCase(count: number): TextCase {
 interface TextCheckCase {
   readonly build: (count: number) => TextCase
   readonly label: string
-  readonly n?: number
 }
 
 /** Each case is timed through getTemplateSubstitutions with its text and spans. */
@@ -437,8 +437,6 @@ const substitutionCases: readonly TextCheckCase[] = [
     build: (count) =>
       repeatUnit({ count, expectedUnit: 'xxxxxx ', prefix: '/* ', suffix: '*/', unit: '${aaa} ' }),
     label: 'placeholders inside one block comment',
-    /** Keeps the N sample several ticks above coarse Linux thread CPU clock resolution. */
-    n: 48_000,
   },
   /**
    * Every placeholder's name scan reaches the same name end, which must be found once, not once
@@ -867,20 +865,14 @@ const manyTemplateContextsForSize = cachedBySize((size) =>
 )
 
 const checks: readonly ScalingCheck[] = [
-  ...substitutionCases.map(({ build, label, n }) =>
-    defineTextCheck(
-      `substitution (${label})`,
-      build,
-      ({ spans, text }) => getTemplateSubstitutions(text, spans),
-      n,
+  ...substitutionCases.map(({ build, label }) =>
+    defineTextCheck(`substitution (${label})`, build, ({ spans, text }) =>
+      getTemplateSubstitutions(text, spans),
     ),
   ),
-  ...escapeCases.map(({ build, label, n }) =>
-    defineTextCheck(
-      `JavaScript escape replacement (${label})`,
-      build,
-      ({ text }) => replaceJavaScriptEscapes(text),
-      n,
+  ...escapeCases.map(({ build, label }) =>
+    defineTextCheck(`JavaScript escape replacement (${label})`, build, ({ text }) =>
+      replaceJavaScriptEscapes(text),
     ),
   ),
   ...diagnosticsCases.map(defineDiagnosticsCheck),
@@ -1036,8 +1028,10 @@ interface AttemptTiming {
 }
 
 /**
- * Alternates N and 4N samples, keeping each size's minimum and first mismatch (verification runs
- * inside `measure`, after its clock stops). Alternating spreads a burst of machine load across both
+ * Alternates N and 4N samples, keeping each size's minimum positive sample and first mismatch
+ * (verification runs inside `measure`, after its clock stops). A coarse CPU clock can report zero
+ * for a short sample; zero is kept only until that size produces a positive reading, and an all-zero
+ * side still fails as an unmeasurable probe. Alternating spreads a burst of machine load across both
  * sides of the ratio; timing every N sample before every 4N sample lets one burst inflate a single
  * side. Reports each sample's size and attempt before taking it, so a check stopped at its deadline
  * or heap cap names where it was.
@@ -1055,10 +1049,14 @@ function timeInterleaved(
         stage: `size ${timing.size}, run ${run} of ${RUNS_PER_SIZE}, ${attemptLabel}`,
       })
       const measurement = check.measure(timing.size)
-      timing.bestMs = Math.min(timing.bestMs, measurement.elapsedMs)
+      timing.bestMs = selectMinimumPositiveSample(timing.bestMs, measurement.elapsedMs)
       timing.mismatch ??= measurement.mismatch
     }
-    if (run >= EARLY_EXIT_MIN_RUNS && at4N.bestMs > EARLY_EXIT_RATIO * atN.bestMs) {
+    if (
+      run >= EARLY_EXIT_MIN_RUNS &&
+      atN.bestMs > 0 &&
+      at4N.bestMs > EARLY_EXIT_RATIO * atN.bestMs
+    ) {
       return { at4N, atN, runs: run }
     }
   }
@@ -1093,9 +1091,10 @@ function runTimedCheck(check: ScalingCheck, reportProgress: ReportProgress): Che
       }
     }
 
+    const hasUnmeasurableTiming = atN.bestMs === 0 || at4N.bestMs === 0
     const ratio = at4N.bestMs / atN.bestMs
-    const isSuperlinear = ratio > SCALING_THRESHOLD
-    const isImplausible = ratio < MIN_PLAUSIBLE_RATIO
+    const isSuperlinear = !hasUnmeasurableTiming && ratio > SCALING_THRESHOLD
+    const isImplausible = hasUnmeasurableTiming || ratio < MIN_PLAUSIBLE_RATIO
     const reading =
       `${check.name}: N=${check.n} ${atN.bestMs.toFixed(3)}ms, 4N=${at4N.size} ` +
       `${at4N.bestMs.toFixed(3)}ms, ratio=${ratio.toFixed(2)} (threshold ${SCALING_THRESHOLD}, ` +
@@ -1117,7 +1116,13 @@ function runTimedCheck(check: ScalingCheck, reportProgress: ReportProgress): Che
     reportProgress({
       line:
         `retry ${attempt + 1}/${RATIO_RETRY_COUNT} ${reading}: ` +
-        `${isSuperlinear ? 'above the threshold' : 'below the floor'}, measuring again`,
+        `${
+          hasUnmeasurableTiming
+            ? 'one size produced no positive CPU-time sample'
+            : isSuperlinear
+              ? 'above the threshold'
+              : 'below the floor'
+        }, measuring again`,
     })
   }
 }
@@ -1435,11 +1440,12 @@ async function main() {
   if (outcomes.includes('probe-broken')) {
     console.error(
       'Scaling check failed: at least one probe measured nothing, so its reading cannot be ' +
-        `trusted. Either a hot operation took less than ${MIN_PLAUSIBLE_RATIO}x as long at 4N as at ` +
-        `N on all ${RATIO_RETRY_COUNT + 1} attempts (the timed call is not doing work that grows ` +
-        'with its input: a cache shared across service instances, or an early return; find what ' +
-        'short-circuits it), or the retained-heap guardrail produced no valid reading or read ' +
-        'below its floor (a validation cache that keeps nothing). The FAIL line above names which.',
+        'trusted. Either a timed size produced no finite positive CPU-time sample, a hot operation ' +
+        `took less than ${MIN_PLAUSIBLE_RATIO}x as long at 4N as at N on all ` +
+        `${RATIO_RETRY_COUNT + 1} attempts (the timed call is not doing work that grows with its ` +
+        'input: a cache shared across service instances, or an early return; find what short-circuits ' +
+        'it), or the retained-heap guardrail produced no valid reading or read below its floor (a ' +
+        'validation cache that keeps nothing). The FAIL line above names which.',
     )
   }
   if (outcomes.includes('over-limit')) {
