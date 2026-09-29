@@ -192,7 +192,7 @@ interface OpenRuleBody {
 }
 
 /**
- * Drops empty-rules lint findings for rules whose bodies hold a block-position interpolation:
+ * Drops empty-rules lint findings for rules whose bodies hold a template interpolation:
  * styled-components can turn that interpolation into declarations at runtime, so the rule is not
  * provably empty. The filter runs before validation caching, preserving cache-hit laziness.
  */

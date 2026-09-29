@@ -604,11 +604,10 @@ function defineTextCheck(
   name: string,
   build: (count: number) => TextCase,
   transform: (textCase: TextCase) => string,
-  n = SUBSTITUTION_CHECK_N,
 ): ScalingCheck {
   const caseForSize = cachedBySize(build)
   return defineCheck({
-    n,
+    n: SUBSTITUTION_CHECK_N,
     name,
     run: (size) => transform(caseForSize(size)),
     verify: (result, size) => compareText(caseForSize(size).expected, result),
