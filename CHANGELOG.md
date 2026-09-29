@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.1
+
+### Patch Changes
+
+- 428a932: Avoid reporting styled rules whose bodies contain a template interpolation as empty while preserving diagnostics for genuinely empty rules.
+
+  Thanks usercao!
+
 ## 1.1.0
 
 ### Minor Changes
