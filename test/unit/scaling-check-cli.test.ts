@@ -4,6 +4,7 @@ import {
   createProgressLocationTracker,
   parseFilterArgument,
   selectChecks,
+  selectMinimumPositiveSample,
 } from '../../test/performance/scaling-check-cli.ts'
 
 describe('parseFilterArgument', () => {
@@ -62,6 +63,26 @@ describe('selectChecks', () => {
     for (const check of checks) {
       assert.include(message, check.name)
     }
+  })
+})
+
+describe('selectMinimumPositiveSample', () => {
+  it('replaces an unusable first sample with the first finite positive sample', () => {
+    assert.strictEqual(selectMinimumPositiveSample(Infinity, 0), 0)
+    assert.strictEqual(selectMinimumPositiveSample(0, 4), 4)
+  })
+
+  it('keeps the smallest finite positive sample and ignores later unusable samples', () => {
+    assert.strictEqual(selectMinimumPositiveSample(4, 3), 3)
+    assert.strictEqual(selectMinimumPositiveSample(3, 0), 3)
+    assert.strictEqual(selectMinimumPositiveSample(3, Number.NaN), 3)
+    assert.strictEqual(selectMinimumPositiveSample(3, Infinity), 3)
+  })
+
+  it('leaves a size with no usable samples marked as unmeasurable', () => {
+    assert.strictEqual(selectMinimumPositiveSample(Infinity, Number.NaN), 0)
+    assert.strictEqual(selectMinimumPositiveSample(0, Infinity), 0)
+    assert.strictEqual(selectMinimumPositiveSample(0, -1), 0)
   })
 })
 

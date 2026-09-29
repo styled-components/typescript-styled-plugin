@@ -26,7 +26,7 @@ import {
 import { StyledTemplateLanguageService } from '../../src/template-language-service'
 import { getTemplateSubstitutions } from '../../src/template/template-substitutions'
 import { pluginIdentity } from '../../src/tsserver/plugin-identity'
-import { LINE_SEPARATOR } from '../../src/virtual-document/css-code-scanner'
+import { LINE_SEPARATOR, PARAGRAPH_SEPARATOR } from '../../src/virtual-document/css-code-scanner'
 import {
   StyledVirtualDocumentProvider,
   VirtualDocumentProvider,
@@ -875,6 +875,115 @@ describe('StyledTemplateLanguageService', () => {
           source: pluginIdentity,
         },
       ],
+    )
+  })
+
+  it('should omit empty-rules diagnostics only for rules whose body contains an interpolation (#4)', () => {
+    const manager = new PluginConfigurationManager()
+    manager.updateFromPluginConfig({ lint: { emptyRules: 'error' } })
+    const service = new StyledTemplateLanguageService(
+      ts,
+      manager,
+      new StyledVirtualDocumentProvider(ts),
+    )
+    const text = [
+      '${outside}',
+      '${selector} {}',
+      'a { ${mixin} }',
+      'b { /* } */ ${mixin} }',
+      'multiline { ${() => {',
+      '  return mixin',
+      '}} }',
+      'crlf { ${() => {\r\n  return mixin\r\n}} }',
+      `unicode { ${'${() => {'}${LINE_SEPARATOR}return mixin${PARAGRAPH_SEPARATOR}}} }`,
+      'c { content: "}"; }',
+      'd {}',
+    ].join('\n')
+    const context = createSubstitutingContext(text, 'css', { count: 0 })
+
+    const diagnostics = service.getSemanticDiagnostics(context)
+
+    assert.deepEqual(
+      diagnostics.map(({ length, messageText, start }) => ({ length, messageText, start })),
+      [
+        {
+          length: '${selector}'.length,
+          messageText: 'Do not use empty rulesets',
+          start: text.indexOf('${selector}'),
+        },
+        {
+          length: 1,
+          messageText: 'Do not use empty rulesets',
+          start: text.indexOf('d {}'),
+        },
+      ],
+    )
+  })
+
+  it('should associate interpolations with the innermost empty rule body (#4)', () => {
+    const manager = new PluginConfigurationManager()
+    manager.updateFromPluginConfig({ lint: { emptyRules: 'error' } })
+    const service = new StyledTemplateLanguageService(
+      ts,
+      manager,
+      new StyledVirtualDocumentProvider(ts),
+    )
+    const text = 'a { b { ${mixin} } c {} }'
+    const context = createSubstitutingContext(text, 'css', { count: 0 })
+
+    const diagnostics = service.getSemanticDiagnostics(context)
+
+    assert.deepEqual(
+      diagnostics.map(({ length, messageText, start }) => ({ length, messageText, start })),
+      [
+        {
+          length: 1,
+          messageText: 'Do not use empty rulesets',
+          start: text.indexOf('c {}'),
+        },
+      ],
+    )
+  })
+
+  it('should omit an empty-rules diagnostic for an unclosed rule body containing an interpolation (#4)', () => {
+    const manager = new PluginConfigurationManager()
+    manager.updateFromPluginConfig({ lint: { emptyRules: 'error' } })
+    const service = new StyledTemplateLanguageService(
+      ts,
+      manager,
+      new StyledVirtualDocumentProvider(ts),
+    )
+    const text = 'empty {}\nunclosed { ${mixin}'
+    const context = createSubstitutingContext(text, 'css', { count: 0 })
+
+    const diagnostics = service.getSemanticDiagnostics(context)
+
+    assert.deepEqual(
+      diagnostics
+        .filter(({ messageText }) => messageText === 'Do not use empty rulesets')
+        .map(({ length, start }) => ({ length, start })),
+      [{ length: 'empty'.length, start: text.indexOf('empty') }],
+    )
+    assert.isTrue(diagnostics.some(({ messageText }) => messageText === '} expected'))
+  })
+
+  it('should preserve empty-rules diagnostics from a custom virtual-document provider (#4)', () => {
+    const manager = new PluginConfigurationManager()
+    manager.updateFromPluginConfig({ lint: { emptyRules: 'error' } })
+    const provider: VirtualDocumentProvider = {
+      ...createCustomVirtualDocumentProvider('', ''),
+      createVirtualDocument() {
+        return TextDocument.create('untitled://custom.scss', 'scss', 1, 'a {}')
+      },
+    }
+    const service = new StyledTemplateLanguageService(ts, manager, provider)
+    const context = createSubstitutingContext('a { ${mixin} }', 'css', { count: 0 })
+
+    const diagnostics = service.getSemanticDiagnostics(context)
+
+    assert.deepEqual(
+      diagnostics.map(({ length, messageText, start }) => ({ length, messageText, start })),
+      [{ length: 1, messageText: 'Do not use empty rulesets', start: 0 }],
     )
   })
 

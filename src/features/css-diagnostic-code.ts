@@ -1,5 +1,8 @@
 export const CSS_DIAGNOSTIC_CODE = 9999
 
+/** vscode-css-languageservice's stable lint-rule id for an empty ruleset. */
+export const EMPTY_RULESET_DIAGNOSTIC_CODE = 'emptyRules'
+
 /**
  * vscode-css-languageservice's stable parse-error id for "at-rule or selector expected"
  * (ParseError.RuleOrSelectorExpected, cssErrors.ts). At the template end it reports the wrapper's

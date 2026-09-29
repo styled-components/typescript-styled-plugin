@@ -19,6 +19,7 @@ import {
 import type { VirtualDocumentSessionProvider } from '../virtual-document/virtual-document-session-provider.ts'
 import {
   CSS_DIAGNOSTIC_CODE,
+  EMPTY_RULESET_DIAGNOSTIC_CODE,
   RULE_OR_SELECTOR_EXPECTED_DIAGNOSTIC_CODE,
 } from './css-diagnostic-code.ts'
 import type { ScssLanguageService } from './styles-language-services.ts'
@@ -164,11 +165,145 @@ export class DiagnosticsFeature {
         valueDiagnostics.some((other) => isSameDiagnostic(diagnostic, other)),
       )
     }
+    if (styledProvider) {
+      diagnostics = filterEmptyRulesWithInterpolations(
+        this.typescript,
+        context,
+        diagnostics,
+        lineMap,
+        styledProvider,
+      )
+    }
     if (cacheKey !== undefined) {
       this.validationCache.set(cacheKey, diagnostics)
     }
     return { diagnostics, getLineMap: () => lineMap }
   }
+}
+
+interface RuleBody {
+  readonly end: number
+  readonly start: number
+}
+
+interface OpenRuleBody {
+  end?: number
+  readonly start: number
+}
+
+/**
+ * Drops empty-rules lint findings for rules whose bodies hold a template interpolation:
+ * styled-components can turn that interpolation into declarations at runtime, so the rule is not
+ * provably empty. The filter runs before validation caching, preserving cache-hit laziness.
+ */
+function filterEmptyRulesWithInterpolations(
+  typescript: typeof ts,
+  context: TemplateContext,
+  diagnostics: Diagnostic[],
+  lineMap: TemplateLineMap,
+  virtualDocumentProvider: VirtualDocumentProvider,
+): Diagnostic[] {
+  if (!diagnostics.some(({ code }) => code === EMPTY_RULESET_DIAGNOSTIC_CODE)) {
+    return diagnostics
+  }
+  const interpolationSpans = getInterpolationSpans(typescript, context)
+  if (interpolationSpans.length === 0) {
+    return diagnostics
+  }
+  const cssText = getTemplateCssText(context)
+  const ruleBodies = findRuleBodies(cssText)
+  return diagnostics.filter((diagnostic) => {
+    if (diagnostic.code !== EMPTY_RULESET_DIAGNOSTIC_CODE) {
+      return true
+    }
+    const selectorSpan = fromVirtualDocSpan(virtualDocumentProvider, diagnostic.range, lineMap)
+    const body = selectorSpan && findNextRuleBody(ruleBodies, selectorSpan.end)
+    if (!body) {
+      return true
+    }
+    return !containsInterpolation(body, interpolationSpans)
+  })
+}
+
+function getInterpolationSpans(
+  typescript: typeof ts,
+  context: TemplateContext,
+): readonly TemplateSpan[] {
+  const { node } = context
+  if (!typescript.isTemplateExpression(node)) {
+    return []
+  }
+  const templateStart = node.getStart() + 1
+  let start = node.head.end - templateStart - 2
+  return node.templateSpans.map(({ literal }) => {
+    const end = literal.getStart() - templateStart + 1
+    const span = { end, start }
+    start = literal.getEnd() - templateStart - 2
+    return span
+  })
+}
+
+function findRuleBodies(text: string): readonly RuleBody[] {
+  const state = createCssCodeScanState()
+  const bodies: OpenRuleBody[] = []
+  const openBodies: OpenRuleBody[] = []
+  for (let index = 0; index < text.length;) {
+    const end = nonCodeEnd(text, index, state)
+    if (end !== -1) {
+      index = end
+      continue
+    }
+    const character = text[index]
+    if (!state.url) {
+      if (character === '{') {
+        const body = { start: index + 1 }
+        bodies.push(body)
+        openBodies.push(body)
+      } else if (character === '}') {
+        const body = openBodies.pop()
+        if (body) {
+          body.end = index
+        }
+      }
+    }
+    index++
+  }
+  for (const body of openBodies) {
+    body.end = text.length
+  }
+  return bodies.filter((body): body is RuleBody => body.end !== undefined)
+}
+
+function findNextRuleBody(bodies: readonly RuleBody[], selectorEnd: number): RuleBody | undefined {
+  let low = 0
+  let high = bodies.length
+  while (low < high) {
+    const middle = (low + high) >>> 1
+    if (bodies[middle].start <= selectorEnd) {
+      low = middle + 1
+    } else {
+      high = middle
+    }
+  }
+  return bodies[low]
+}
+
+function containsInterpolation(
+  body: RuleBody,
+  interpolationSpans: readonly TemplateSpan[],
+): boolean {
+  let low = 0
+  let high = interpolationSpans.length
+  while (low < high) {
+    const middle = (low + high) >>> 1
+    if (interpolationSpans[middle].start < body.start) {
+      low = middle + 1
+    } else {
+      high = middle
+    }
+  }
+  const interpolation = interpolationSpans[low]
+  return interpolation !== undefined && interpolation.end <= body.end
 }
 
 /**

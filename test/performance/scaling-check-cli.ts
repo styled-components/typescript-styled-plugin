@@ -29,6 +29,18 @@ export interface NamedCheck {
   readonly name: string
 }
 
+/**
+ * Keeps the smallest finite positive CPU-time sample. A coarse clock may report zero for a short
+ * run; zero represents "not measured yet" until a later sample is usable. A size whose every
+ * sample is unusable therefore remains zero and is reported as a broken probe.
+ */
+export function selectMinimumPositiveSample(currentMs: number, sampleMs: number): number {
+  if (Number.isFinite(sampleMs) && sampleMs > 0) {
+    return currentMs > 0 ? Math.min(currentMs, sampleMs) : sampleMs
+  }
+  return currentMs === Infinity ? 0 : currentMs
+}
+
 export interface SelectedCheck<Check extends NamedCheck> {
   readonly check: Check
   /** The check's position in `allChecks`, unchanged by filtering: a worker loads the same full list and looks the check up by this index. */
