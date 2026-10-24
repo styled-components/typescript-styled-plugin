@@ -1,3 +1,6 @@
+import { execFileSync } from 'node:child_process'
+import path from 'node:path'
+
 import { assert, describe, it } from 'vitest'
 
 import { PluginConfigurationManager } from '../../src/configuration/plugin-configuration'
@@ -721,6 +724,21 @@ describe('PluginConfigurationManager', () => {
 
     assert.isTrue(editorConfiguration.updateFromPluginConfig(config))
     assert.deepEqual(manager.config.tags.slice(-1), ['editorTag'])
+  })
+})
+
+describe('EditorConfigurationManager lifecycle', () => {
+  it('should release discarded projects while continuing to update a surviving project', () => {
+    execFileSync(
+      process.execPath,
+      [
+        '--expose-gc',
+        '--experimental-transform-types',
+        '--no-warnings',
+        path.join(process.cwd(), 'test/unit/editor-configuration-lifecycle.probe.ts'),
+      ],
+      { stdio: 'pipe', timeout: 10_000 },
+    )
   })
 })
 
