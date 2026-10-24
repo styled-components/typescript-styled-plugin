@@ -7,5 +7,5 @@
     "strict": true,
     "types": ["node"]
   },
-  "include": ["consumer-api.cts", "runtime.ts"]
+  "include": ["runtime.ts"]
 }
