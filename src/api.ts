@@ -4,6 +4,7 @@
 /** Public API that lets other libraries consume the language service. */
 export { StyledTemplateLanguageService } from './template-language-service.ts'
 export {
+  EDITOR_CONFIGURATION_PROTOCOL_VERSION,
   PluginConfigurationManager,
   /** Alias matching the name 1.0.1 published for this class. */
   PluginConfigurationManager as ConfigurationManager,
@@ -11,6 +12,8 @@ export {
 export type {
   StyledPluginConfiguration,
   StyledPluginConfigurationInput,
+  StyledPluginEditorConfiguration,
+  StyledPluginEditorConfigurationEnvelope,
   StyledPluginEmmetConfiguration,
   StyledPluginLintConfiguration,
   StyledPluginLintLevel,

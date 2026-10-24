@@ -17,6 +17,7 @@ const API_EXPORTS = [
   'PluginConfigurationManager',
   'getTemplateSettings',
 ]
+const EDITOR_CONFIGURATION_PROTOCOL_VERSION_EXPORT = 'EDITOR_CONFIGURATION_PROTOCOL_VERSION'
 
 function expectFunction(value, description) {
   if (typeof value !== 'function') {
@@ -27,6 +28,12 @@ function expectFunction(value, description) {
 function expectApiExports(module, description) {
   for (const name of API_EXPORTS) {
     expectFunction(module[name], `${name} from ${description}`)
+  }
+  if (module[EDITOR_CONFIGURATION_PROTOCOL_VERSION_EXPORT] !== 1) {
+    throw new TypeError(
+      `${EDITOR_CONFIGURATION_PROTOCOL_VERSION_EXPORT} from ${description} must be 1; received ` +
+        `${String(module[EDITOR_CONFIGURATION_PROTOCOL_VERSION_EXPORT])}.`,
+    )
   }
 }
 

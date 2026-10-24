@@ -2,3 +2,4 @@
 // Licensed under the MIT License.
 
 export const pluginIdentity = 'ts-styled-plugin'
+export const pluginPackageName = '@styled/typescript-styled-plugin'

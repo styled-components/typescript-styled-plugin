@@ -91,6 +91,178 @@ describe.concurrent('Plugin lifecycle', () => {
     assert.isFalse(resetTags.success)
   })
 
+  it('should append and clear editor tags without replacing the project base', async (context) => {
+    const server = startServer(context, { project: 'editor-configuration-project-fixture' })
+    const source = mark(
+      'const base = projectTag`boarder: 0; color:⟨base⟩`; const extra = editorTag`boarder: 0; color:⟨extra⟩`',
+    )
+    const file = server.open(source.text)
+    const complete = (name: 'base' | 'extra') =>
+      server.request('completions', { file, ...source.at(name) })
+
+    const before = await complete('extra')
+    await server.configurePlugin(editorEnvelope(['editorTag', 'projectTag']))
+    const baseWithOverlay = await complete('base')
+    const extraWithOverlay = await complete('extra')
+    const diagnosticsWithOverlay = pluginDiagnostics(
+      await server.request('semanticDiagnosticsSync', { file }),
+    )
+    await server.configurePlugin(editorEnvelope([]))
+    const baseAfterClear = await complete('base')
+    const extraAfterClear = await complete('extra')
+
+    assert.isFalse(before.success)
+    assert.include(
+      bodyOf(baseWithOverlay).map(({ name }) => name),
+      'aliceblue',
+    )
+    assert.include(
+      bodyOf(extraWithOverlay).map(({ name }) => name),
+      'aliceblue',
+    )
+    assert.deepEqual(diagnosticsWithOverlay, [])
+    assert.include(
+      bodyOf(baseAfterClear).map(({ name }) => name),
+      'aliceblue',
+    )
+    assert.isFalse(extraAfterClear.success)
+  })
+
+  it('should keep the last valid overlay after a malformed editor envelope', async (context) => {
+    const server = startServer(context, { project: 'editor-configuration-project-fixture' })
+    const source = mark(
+      'const base = projectTag`color:⟨base⟩`; const extra = editorTag`color:⟨extra⟩`',
+    )
+    const file = server.open(source.text)
+    await server.configurePlugin(editorEnvelope(['editorTag']))
+
+    await server.configurePlugin({
+      editorConfiguration: {
+        extraTags: ['replacementTag'],
+        protocolVersion: 2,
+        source: 'vscode-styled-components',
+      },
+    })
+    const base = await server.request('completions', { file, ...source.at('base') })
+    const extra = await server.request('completions', { file, ...source.at('extra') })
+
+    assert.include(
+      bodyOf(base).map(({ name }) => name),
+      'aliceblue',
+    )
+    assert.include(
+      bodyOf(extra).map(({ name }) => name),
+      'aliceblue',
+    )
+    assert.include(server.readLog(), 'unsupported protocolVersion type or value')
+  })
+
+  it('should accept an overlay from another host integration', async (context) => {
+    const server = startServer(context, { project: 'editor-configuration-project-fixture' })
+    const source = mark('const extra = editorTag`color:⟨extra⟩`')
+    const file = server.open(source.text)
+
+    await server.configurePlugin({
+      editorConfiguration: {
+        extraTags: ['editorTag'],
+        protocolVersion: 1,
+        source: 'example-lsp.css-templates',
+      },
+    })
+    const extra = await server.request('completions', { file, ...source.at('extra') })
+
+    assert.include(
+      bodyOf(extra).map(({ name }) => name),
+      'aliceblue',
+    )
+  })
+
+  it('should apply editor tags sent before project creation and restore the project base', async (context) => {
+    const server = startServer(context, { project: 'editor-configuration-project-fixture' })
+    await server.configurePlugin(editorEnvelope(['editorTag']))
+    const source = mark(
+      'const base = projectTag`color:⟨base⟩`; const extra = editorTag`color:⟨extra⟩`',
+    )
+    const file = server.open(source.text)
+
+    const base = await server.request('completions', { file, ...source.at('base') })
+    const extra = await server.request('completions', { file, ...source.at('extra') })
+
+    assert.include(
+      bodyOf(base).map(({ name }) => name),
+      'aliceblue',
+    )
+    assert.include(
+      bodyOf(extra).map(({ name }) => name),
+      'aliceblue',
+    )
+  })
+
+  it('should preserve a legacy replacement sent before project creation', async (context) => {
+    const server = startServer(context, { project: 'editor-configuration-project-fixture' })
+    await server.configurePlugin({ tags: ['runtimeTag'], validate: true })
+    const source = mark(
+      'const project = projectTag`color:⟨project⟩`; const runtime = runtimeTag`color:⟨runtime⟩`',
+    )
+    const file = server.open(source.text)
+
+    const project = await server.request('completions', { file, ...source.at('project') })
+    const runtime = await server.request('completions', { file, ...source.at('runtime') })
+
+    assert.isFalse(project.success)
+    assert.include(
+      bodyOf(runtime).map(({ name }) => name),
+      'aliceblue',
+    )
+  })
+
+  it('should apply an empty legacy replacement sent before project creation', async (context) => {
+    const server = startServer(context, { project: 'editor-configuration-project-fixture' })
+    await server.configurePlugin({})
+    const source = mark(
+      'const project = projectTag`color:⟨project⟩`; const styledTemplate = styled.div`color:⟨styled⟩`',
+    )
+    const file = server.open(source.text)
+
+    const project = await server.request('completions', { file, ...source.at('project') })
+    const styled = await server.request('completions', { file, ...source.at('styled') })
+
+    assert.isFalse(project.success)
+    assert.include(
+      bodyOf(styled).map(({ name }) => name),
+      'aliceblue',
+    )
+  })
+
+  it('should let the last dynamic configuration kind replace the previous one', async (context) => {
+    const server = startServer(context, { project: 'editor-configuration-project-fixture' })
+    const source = mark(
+      'const project = projectTag`color:⟨project⟩`; const editor = editorTag`color:⟨editor⟩`; const runtime = runtimeTag`color:⟨runtime⟩`',
+    )
+    const file = server.open(source.text)
+    const complete = (name: 'editor' | 'project' | 'runtime') =>
+      server.request('completions', { file, ...source.at(name) })
+
+    await server.configurePlugin(editorEnvelope(['editorTag']))
+    assert.isTrue((await complete('editor')).success)
+
+    await server.configurePlugin({ tags: ['runtimeTag'], validate: true })
+    assert.isFalse((await complete('project')).success)
+    assert.isFalse((await complete('editor')).success)
+    assert.isTrue((await complete('runtime')).success)
+
+    await server.configurePlugin(editorEnvelope(['editorTag']))
+    assert.isTrue((await complete('project')).success)
+    assert.isTrue((await complete('editor')).success)
+    assert.isFalse((await complete('runtime')).success)
+
+    await server.configurePlugin({ tags: ['runtimeTag'], validate: true })
+    await server.configurePlugin(editorEnvelope([]))
+    assert.isTrue((await complete('project')).success)
+    assert.isFalse((await complete('editor')).success)
+    assert.isFalse((await complete('runtime')).success)
+  })
+
   it('should apply validation configuration changes to diagnostics and code fixes', async (context) => {
     const server = startServer(context)
     const source = mark('const q = css`⟨property⟩boarder⟨/property⟩: 1px solid black;`')
@@ -247,3 +419,13 @@ describe.concurrent('Plugin lifecycle', () => {
     )
   })
 })
+
+function editorEnvelope(extraTags: ReadonlyArray<string>): unknown {
+  return {
+    editorConfiguration: {
+      extraTags,
+      protocolVersion: 1,
+      source: 'vscode-styled-components',
+    },
+  }
+}
