@@ -174,10 +174,10 @@ function isLegacyConfigurationOverride(config: unknown, projectConfiguration: un
   if (projectConfiguration !== undefined) {
     return true
   }
-  if (typeof config !== 'object' || config === null || Array.isArray(config)) {
-    return true
-  }
   try {
+    if (typeof config !== 'object' || config === null || Array.isArray(config)) {
+      return true
+    }
     const keys = Object.keys(config)
     return !(
       keys.every((name) => name === 'global' || name === 'name') &&

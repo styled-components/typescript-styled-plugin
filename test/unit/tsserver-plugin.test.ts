@@ -165,6 +165,16 @@ describe('TsServerStyledPlugin', () => {
     assert.deepEqual(lastLoggedConfiguration(messages), { tagCount: 7, validate: true })
   })
 
+  it('should use defaults when a revoked configuration arrives before create', () => {
+    const messages: string[] = []
+    const plugin = new TsServerStyledPlugin(ts)
+    const { proxy, revoke } = Proxy.revocable({}, {})
+    revoke()
+
+    assert.doesNotThrow(() => plugin.create(createPluginCreateInfo(messages, { config: proxy })))
+    assert.deepEqual(lastLoggedConfiguration(messages), { tagCount: 7, validate: true })
+  })
+
   it('should not share a callable nested inside a legacy configuration', () => {
     const messages: string[] = []
     const projectService = createProjectService(messages)
