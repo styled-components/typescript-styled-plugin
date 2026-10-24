@@ -26,6 +26,7 @@ const API_EXPORTS = [
   'PluginConfigurationManager',
   'getTemplateSettings',
 ]
+const EDITOR_CONFIGURATION_PROTOCOL_VERSION_EXPORT = 'EDITOR_CONFIGURATION_PROTOCOL_VERSION'
 
 /**
  * Bounds on the import() consumer, which runs one code-fix request through the packed plugin: a
@@ -53,6 +54,12 @@ function expectFunction(value: unknown, description: string): void {
 function expectApiExports(module: Record<string, unknown>, description: string): void {
   for (const name of API_EXPORTS) {
     expectFunction(module[name], `${name} from ${description}`)
+  }
+  if (module[EDITOR_CONFIGURATION_PROTOCOL_VERSION_EXPORT] !== 1) {
+    throw new TypeError(
+      `${EDITOR_CONFIGURATION_PROTOCOL_VERSION_EXPORT} from ${description} must be 1; received ` +
+        `${String(module[EDITOR_CONFIGURATION_PROTOCOL_VERSION_EXPORT])}.`,
+    )
   }
 }
 
