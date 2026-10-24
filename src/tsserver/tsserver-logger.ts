@@ -7,6 +7,10 @@ export class TsServerLogger implements Logger {
   public constructor(private readonly pluginInfo: ts.server.PluginCreateInfo) {}
 
   public log(message: string) {
-    this.pluginInfo.project.projectService.logger.info(`[${pluginIdentity}] ${message}`)
+    try {
+      this.pluginInfo.project.projectService.logger.info(`[${pluginIdentity}] ${message}`)
+    } catch {
+      /** Logging must never fail a tsserver request. */
+    }
   }
 }

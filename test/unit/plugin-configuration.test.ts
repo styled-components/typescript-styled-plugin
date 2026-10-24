@@ -1,6 +1,10 @@
 import { assert, describe, it } from 'vitest'
 
 import { PluginConfigurationManager } from '../../src/configuration/plugin-configuration'
+import {
+  EditorConfigurationManager,
+  ProjectConfigurationManager,
+} from '../../src/tsserver/editor-configuration'
 
 describe('PluginConfigurationManager', () => {
   it('should expose the complete default tag list', () => {
@@ -199,6 +203,48 @@ describe('PluginConfigurationManager', () => {
     ])
   })
 
+  it('should copy tag arrays so delayed hostile methods cannot reach language requests', () => {
+    const manager = new PluginConfigurationManager()
+    const tags = new Proxy(['styled'], {
+      get(target, property, receiver) {
+        if (property === 'some') {
+          throw new Error('late tags failure')
+        }
+        return Reflect.get(target, property, receiver)
+      },
+    })
+
+    manager.updateFromPluginConfig({ tags })
+
+    assert.notStrictEqual(manager.config.tags, tags)
+    assert.doesNotThrow(() => manager.config.tags.some((tag) => tag === 'styled'))
+  })
+
+  it('should deeply copy Emmet containers while preserving cycles', () => {
+    const manager = new PluginConfigurationManager()
+    const emmet: Record<string, unknown> = { preferences: { compact: true } }
+    emmet.self = emmet
+
+    manager.updateFromPluginConfig({ emmet })
+
+    assert.notStrictEqual(manager.config.emmet, emmet)
+    assert.deepEqual(manager.config.emmet.preferences, { compact: true })
+    assert.strictEqual(manager.config.emmet.self, manager.config.emmet)
+  })
+
+  it.each([
+    ['an Emmet callable', { emmet: { preferences: createHostileCallable() } }],
+    ['an unknown lint callable', { lint: { futureRule: createHostileCallable() } }],
+  ])('should reject %s instead of retaining a host callable', (_description, config) => {
+    const manager = new PluginConfigurationManager()
+    const logger = createLogger()
+
+    manager.updateFromPluginConfig(config, logger)
+
+    assert.deepEqual(manager.config, new PluginConfigurationManager().config)
+    assert.include(logger.messages.join('\n'), 'could not be read safely')
+  })
+
   it('should log a top-level configuration that is not an object', () => {
     const manager = new PluginConfigurationManager()
     const logger = createLogger()
@@ -248,6 +294,23 @@ describe('PluginConfigurationManager', () => {
       manager.updateFromPluginConfig({ tags: 5, validate: false }, throwingLogger),
     )
     assert.strictEqual(manager.config.validate, false)
+  })
+
+  it('should use defaults when a hostile configuration cannot be read safely', () => {
+    const manager = new PluginConfigurationManager()
+    const logger = createLogger()
+    const hostileConfig = new Proxy(
+      {},
+      {
+        ownKeys() {
+          throw new Error('ownKeys failed')
+        },
+      },
+    )
+
+    assert.doesNotThrow(() => manager.updateFromPluginConfig(hostileConfig, logger))
+    assert.deepEqual(manager.config, new PluginConfigurationManager().config)
+    assert.include(logger.messages.join('\n'), 'could not be read safely')
   })
 
   it.each([null, undefined])(
@@ -321,7 +384,359 @@ describe('PluginConfigurationManager', () => {
     assert.deepEqual(manager.config.emmet, { futureOption: true } as unknown)
     assert.deepEqual(logger.messages, [])
   })
+
+  it('should append normalized editor tags without changing the project configuration', () => {
+    const editorConfiguration = new EditorConfigurationManager()
+    const manager = new ProjectConfigurationManager(editorConfiguration)
+    manager.updateFromProjectConfig({
+      emmet: { showExpandedAbbreviation: 'never' },
+      lint: { unknownProperties: 'ignore' },
+      tags: ['css', 'projectTag'],
+      validate: false,
+    })
+
+    editorConfiguration.updateFromPluginConfig({
+      editorConfiguration: {
+        extraTags: [' globalStyle ', 'projectTag', '', 'globalStyle', 'styledNative'],
+        protocolVersion: 1,
+        source: 'vscode-styled-components',
+      },
+    })
+
+    assert.deepEqual(manager.config, {
+      emmet: { showExpandedAbbreviation: 'never' },
+      lint: { emptyRules: 'ignore', unknownProperties: 'ignore' },
+      tags: ['css', 'projectTag', 'globalStyle', 'styledNative'],
+      validate: false,
+    })
+  })
+
+  it('should clear only editor tags when the overlay sends an empty list', () => {
+    const editorConfiguration = new EditorConfigurationManager()
+    const manager = new ProjectConfigurationManager(editorConfiguration)
+    manager.updateFromProjectConfig({ tags: ['projectTag'] })
+    editorConfiguration.updateFromPluginConfig(editorEnvelope(['editorTag']))
+
+    editorConfiguration.updateFromPluginConfig(editorEnvelope([]))
+
+    assert.deepEqual(manager.config.tags, ['projectTag'])
+  })
+
+  it('should clear editor tags for a legacy runtime replacement', () => {
+    const editorConfiguration = new EditorConfigurationManager()
+    const manager = new ProjectConfigurationManager(editorConfiguration)
+    manager.updateFromProjectConfig({ tags: ['projectTag'] })
+    editorConfiguration.updateFromPluginConfig(editorEnvelope(['editorTag']))
+
+    editorConfiguration.deactivate()
+    manager.updateFromPluginConfig({ tags: ['runtimeTag'], validate: false })
+
+    assert.deepEqual(manager.config.tags, ['runtimeTag'])
+    assert.strictEqual(manager.config.validate, false)
+  })
+
+  it('should restore the project base when an editor overlay follows a legacy replacement', () => {
+    const editorConfiguration = new EditorConfigurationManager()
+    const manager = new ProjectConfigurationManager(editorConfiguration)
+    manager.updateFromProjectConfig({ tags: ['projectTag'], validate: false })
+    editorConfiguration.deactivate()
+    manager.updateFromPluginConfig({ tags: ['runtimeTag'], validate: true })
+
+    editorConfiguration.updateFromPluginConfig(editorEnvelope(['editorTag']))
+
+    assert.deepEqual(manager.config.tags, ['projectTag', 'editorTag'])
+    assert.strictEqual(manager.config.validate, false)
+  })
+
+  it('should restore the project base when an empty editor overlay follows a legacy replacement', () => {
+    const editorConfiguration = new EditorConfigurationManager()
+    const manager = new ProjectConfigurationManager(editorConfiguration)
+    manager.updateFromProjectConfig({ tags: ['projectTag'], validate: false })
+    editorConfiguration.deactivate()
+    manager.updateFromPluginConfig({ tags: ['runtimeTag'], validate: true })
+
+    editorConfiguration.updateFromPluginConfig(editorEnvelope([]))
+
+    assert.deepEqual(manager.config.tags, ['projectTag'])
+    assert.strictEqual(manager.config.validate, false)
+  })
+
+  it('should notify once when switching from an editor overlay to a legacy replacement', () => {
+    const editorConfiguration = new EditorConfigurationManager()
+    const manager = new ProjectConfigurationManager(editorConfiguration)
+    manager.updateFromProjectConfig({ tags: ['projectTag'] })
+    editorConfiguration.updateFromPluginConfig(editorEnvelope(['editorTag']))
+    let updates = 0
+    manager.onUpdatedConfig(() => updates++)
+
+    editorConfiguration.deactivate()
+    manager.updateFromPluginConfig({ tags: ['runtimeTag'] })
+
+    assert.strictEqual(updates, 1)
+    assert.deepEqual(manager.config.tags, ['runtimeTag'])
+  })
+
+  it('should not notify for the same normalized editor tags', () => {
+    const editorConfiguration = new EditorConfigurationManager()
+    const manager = new ProjectConfigurationManager(editorConfiguration)
+    let updates = 0
+    manager.onUpdatedConfig(() => updates++)
+
+    editorConfiguration.updateFromPluginConfig(editorEnvelope([' editorTag ', 'editorTag']))
+    editorConfiguration.updateFromPluginConfig(editorEnvelope(['editorTag']))
+
+    assert.strictEqual(updates, 1)
+  })
+
+  it.each([
+    ['an unknown protocol', editorEnvelope(['replacement'], { protocolVersion: 2 })],
+    ['an empty source', editorEnvelope(['replacement'], { source: '  ' })],
+    ['a non-string source', editorEnvelope(['replacement'], { source: 1 })],
+    ['an overlong source', editorEnvelope(['replacement'], { source: 'x'.repeat(129) })],
+    ['a non-array tag value', editorEnvelope('replacement')],
+  ])('should preserve the last valid editor tags for %s', (_description, config) => {
+    const editorConfiguration = new EditorConfigurationManager()
+    const manager = new ProjectConfigurationManager(editorConfiguration)
+    const logger = createLogger()
+    editorConfiguration.updateFromPluginConfig(editorEnvelope(['editorTag']))
+
+    editorConfiguration.updateFromPluginConfig(config, logger)
+
+    assert.deepEqual(manager.config.tags.slice(-1), ['editorTag'])
+    assert.strictEqual(logger.messages.length, 1)
+  })
+
+  it('should discard non-string editor tag entries and report one summary', () => {
+    const editorConfiguration = new EditorConfigurationManager()
+    const manager = new ProjectConfigurationManager(editorConfiguration)
+    const logger = createLogger()
+
+    editorConfiguration.updateFromPluginConfig(editorEnvelope(['editorTag', 1, null]), logger)
+
+    assert.deepEqual(manager.config.tags.slice(-1), ['editorTag'])
+    assert.deepEqual(logger.messages, [
+      'Ignored 2 non-string entries in editorConfiguration.extraTags.',
+      'Applied editor configuration v1: 1 additional tags.',
+    ])
+  })
+
+  it('should accept another editor integration source', () => {
+    const editorConfiguration = new EditorConfigurationManager()
+    const manager = new ProjectConfigurationManager(editorConfiguration)
+
+    editorConfiguration.updateFromPluginConfig(
+      editorEnvelope(['editorTag'], { source: 'example-editor.css-templates' }),
+    )
+
+    assert.deepEqual(manager.config.tags.slice(-1), ['editorTag'])
+  })
+
+  it('should replace one integration source overlay with another instead of accumulating them', () => {
+    const editorConfiguration = new EditorConfigurationManager()
+    const manager = new ProjectConfigurationManager(editorConfiguration)
+    editorConfiguration.updateFromPluginConfig(
+      editorEnvelope(['firstTag'], { source: 'first-editor.css-templates' }),
+    )
+
+    editorConfiguration.updateFromPluginConfig(
+      editorEnvelope(['secondTag'], { source: 'second-editor.css-templates' }),
+    )
+
+    assert.notInclude(manager.config.tags, 'firstTag')
+    assert.deepEqual(manager.config.tags.slice(-1), ['secondTag'])
+  })
+
+  it('should apply editor configuration even when the logger throws', () => {
+    const editorConfiguration = new EditorConfigurationManager()
+    const manager = new ProjectConfigurationManager(editorConfiguration)
+    const throwingLogger = {
+      log() {
+        throw new Error('log failed')
+      },
+    }
+
+    assert.doesNotThrow(() =>
+      editorConfiguration.updateFromPluginConfig(editorEnvelope(['editorTag', 1]), throwingLogger),
+    )
+    assert.deepEqual(manager.config.tags.slice(-1), ['editorTag'])
+  })
+
+  it.each([
+    ['too many entries', Array.from({ length: 65 }, (_, index) => `tag-${index}`)],
+    ['an overlong entry', ['x'.repeat(257)]],
+    ['an overlong whitespace entry', [' '.repeat(257)]],
+    ['an excessive total size', Array.from({ length: 17 }, () => 'x'.repeat(256))],
+  ])('should preserve the last valid editor tags for %s', (_description, extraTags) => {
+    const editorConfiguration = new EditorConfigurationManager()
+    const manager = new ProjectConfigurationManager(editorConfiguration)
+    const logger = createLogger()
+    editorConfiguration.updateFromPluginConfig(editorEnvelope(['editorTag']))
+
+    editorConfiguration.updateFromPluginConfig(editorEnvelope(extraTags), logger)
+
+    assert.deepEqual(manager.config.tags.slice(-1), ['editorTag'])
+    assert.include(logger.messages.join('\n'), 'resource limits')
+  })
+
+  it('should ignore a custom array iterator and enforce the captured array length', () => {
+    const editorConfiguration = new EditorConfigurationManager()
+    const manager = new ProjectConfigurationManager(editorConfiguration)
+    const extraTags: string[] = []
+    let iteratorCalled = false
+    extraTags[Symbol.iterator] = function* () {
+      iteratorCalled = true
+      for (let index = 0; index < 65; index++) {
+        yield `tag-${index}`
+      }
+      return undefined
+    }
+
+    editorConfiguration.updateFromPluginConfig(editorEnvelope(extraTags))
+
+    assert.isFalse(iteratorCalled)
+    assert.deepEqual(manager.config.tags, new PluginConfigurationManager().config.tags)
+  })
+
+  it('should reject a non-primitive array length snapshot without reading array entries', () => {
+    const editorConfiguration = new EditorConfigurationManager()
+    const manager = new ProjectConfigurationManager(editorConfiguration)
+    const target: string[] = []
+    let indexedReads = 0
+    const extraTags = new Proxy(target, {
+      get(array, property, receiver) {
+        if (property === 'length') {
+          return {
+            [Symbol.toPrimitive]() {
+              return 0
+            },
+          }
+        }
+        if (typeof property === 'string' && /^\d+$/.test(property)) {
+          indexedReads++
+        }
+        return Reflect.get(array, property, receiver)
+      },
+    })
+
+    editorConfiguration.updateFromPluginConfig(editorEnvelope(extraTags))
+
+    assert.strictEqual(indexedReads, 0)
+    assert.deepEqual(manager.config.tags, new PluginConfigurationManager().config.tags)
+  })
+
+  it('should validate one source snapshot', () => {
+    const editorConfiguration = new EditorConfigurationManager()
+    const manager = new ProjectConfigurationManager(editorConfiguration)
+    let reads = 0
+    const protocol = {
+      extraTags: ['editorTag'],
+      protocolVersion: 1,
+      get source() {
+        reads++
+        return reads === 1 ? 'example-editor.css-templates' : 'x'.repeat(129)
+      },
+    }
+
+    editorConfiguration.updateFromPluginConfig({ editorConfiguration: protocol })
+
+    assert.strictEqual(reads, 1)
+    assert.deepEqual(manager.config.tags.slice(-1), ['editorTag'])
+  })
+
+  it.each([
+    [
+      'a throwing editorConfiguration getter',
+      Object.defineProperty({}, 'editorConfiguration', {
+        get() {
+          throw new Error('getter failed')
+        },
+      }),
+    ],
+    [
+      'a throwing ownKeys proxy',
+      new Proxy(
+        {},
+        {
+          ownKeys() {
+            throw new Error('ownKeys failed')
+          },
+        },
+      ),
+    ],
+  ])('should reject %s without throwing', (_description, config) => {
+    const editorConfiguration = new EditorConfigurationManager()
+    const manager = new ProjectConfigurationManager(editorConfiguration)
+    editorConfiguration.updateFromPluginConfig(editorEnvelope(['editorTag']))
+
+    assert.doesNotThrow(() => editorConfiguration.updateFromPluginConfig(config))
+    assert.deepEqual(manager.config.tags.slice(-1), ['editorTag'])
+  })
+
+  it('should route an unreadable editor marker through legacy normalization', () => {
+    const editorConfiguration = new EditorConfigurationManager()
+    const manager = new ProjectConfigurationManager(editorConfiguration)
+    editorConfiguration.updateFromPluginConfig(editorEnvelope(['editorTag']))
+    const config = new Proxy(
+      {},
+      {
+        getOwnPropertyDescriptor() {
+          throw new Error('descriptor failed')
+        },
+      },
+    )
+
+    assert.isFalse(editorConfiguration.updateFromPluginConfig(config))
+    manager.updateFromPluginConfig(config)
+
+    assert.deepEqual(manager.config, new PluginConfigurationManager().config)
+  })
+
+  it('should reject inherited protocol fields', () => {
+    const editorConfiguration = new EditorConfigurationManager()
+    const manager = new ProjectConfigurationManager(editorConfiguration)
+    editorConfiguration.updateFromPluginConfig(editorEnvelope(['editorTag']))
+    const inherited = Object.create({
+      extraTags: ['replacement'],
+      protocolVersion: 1,
+      source: 'vscode-styled-components',
+    })
+
+    editorConfiguration.updateFromPluginConfig({ editorConfiguration: inherited })
+
+    assert.deepEqual(manager.config.tags.slice(-1), ['editorTag'])
+  })
+
+  it.each([
+    ['an array envelope', Object.assign([], { editorConfiguration: {} })],
+    [
+      'a class instance envelope',
+      new (class {
+        public readonly editorConfiguration = {}
+      })(),
+    ],
+  ])('should match but reject %s', (_description, config) => {
+    const editorConfiguration = new EditorConfigurationManager()
+    const manager = new ProjectConfigurationManager(editorConfiguration)
+    editorConfiguration.updateFromPluginConfig(editorEnvelope(['editorTag']))
+
+    assert.isTrue(editorConfiguration.updateFromPluginConfig(config))
+    assert.deepEqual(manager.config.tags.slice(-1), ['editorTag'])
+  })
 })
+
+function editorEnvelope(
+  extraTags: unknown,
+  overrides: Readonly<Record<string, unknown>> = {},
+): unknown {
+  return {
+    editorConfiguration: {
+      extraTags,
+      protocolVersion: 1,
+      source: 'example-editor.css-templates',
+      ...overrides,
+    },
+  }
+}
 
 function createLogger() {
   const messages: string[] = []
@@ -331,4 +746,12 @@ function createLogger() {
     },
     messages,
   }
+}
+
+function createHostileCallable(): () => void {
+  return new Proxy(() => {}, {
+    ownKeys() {
+      throw new Error('late callable failure')
+    },
+  })
 }

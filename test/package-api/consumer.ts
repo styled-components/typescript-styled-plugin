@@ -1,8 +1,11 @@
 import {
   ConfigurationManager,
+  EDITOR_CONFIGURATION_PROTOCOL_VERSION,
   PluginConfigurationManager,
   type StyledPluginConfiguration,
   type StyledPluginConfigurationInput,
+  type StyledPluginEditorConfiguration,
+  type StyledPluginEditorConfigurationEnvelope,
   type StyledPluginEmmetConfiguration,
   type StyledPluginLintConfiguration,
   type StyledPluginLintLevel,
@@ -35,6 +38,14 @@ const typedConfiguration: StyledPluginConfiguration = {
   validate: true,
 }
 const partialConfiguration: StyledPluginConfigurationInput = { validate: false }
+const editorConfiguration: StyledPluginEditorConfiguration = {
+  extraTags: ['globalStyle'],
+  protocolVersion: EDITOR_CONFIGURATION_PROTOCOL_VERSION,
+  source: 'example-editor.css-templates',
+}
+const editorConfigurationEnvelope: StyledPluginEditorConfigurationEnvelope = {
+  editorConfiguration,
+}
 
 const invalidLintConfiguration: StyledPluginLintConfiguration = {
   // @ts-expect-error lint keys must be supported by the CSS language service.
@@ -76,6 +87,7 @@ void aliasedConfigurationManager
 void virtualDocumentProvider
 void typedConfiguration
 void partialConfiguration
+void editorConfigurationEnvelope
 void invalidLintConfiguration
 void invalidEmmetConfiguration
 void resolvedConfiguration

@@ -318,6 +318,21 @@ without a process boundary. Add or update a tsserver scenario when the change
 affects plugin discovery, tsserver protocol behavior, source-file handling, or
 the interaction between the plugin and a real TypeScript host.
 
+Editor configuration protocol changes must cover both arrival orders in
+`test/e2e/scenarios/plugin-lifecycle.test.ts`: `configurePlugin` before the
+project opens, and after it opens. Keep a positive base-tag control beside any
+assertion that clearing or rejecting an overlay removes results. Public
+protocol type changes also run through `yarn test:package-api:consumers` so the
+minimum and current TypeScript declarations are checked.
+
+Run `yarn test:scaling --filter 'editor tag matching'` when changing overlay
+normalization, resource budgets, or listener storage. The check exercises the
+decorator's real matcher with the maximum additional-tag count, verifies linear
+growth, and fails if matching stops returning the expected result. Run
+`yarn benchmark` to report worst-position matching latency. Changes to shared
+weak-listener storage also need a focused project-lifecycle memory test; the
+diagnostics retained-heap guardrail does not create or close tsserver projects.
+
 CI builds the package with the Node.js version in `.github/.node-version`, then
 verifies the resulting artifact on Node 22.12 and that version against the
 TypeScript versions listed in the e2e matrix

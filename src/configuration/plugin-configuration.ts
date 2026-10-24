@@ -59,6 +59,18 @@ export interface StyledPluginConfiguration {
   readonly validate: boolean
 }
 
+export const EDITOR_CONFIGURATION_PROTOCOL_VERSION = 1
+
+export interface StyledPluginEditorConfiguration {
+  readonly extraTags: ReadonlyArray<string>
+  readonly protocolVersion: typeof EDITOR_CONFIGURATION_PROTOCOL_VERSION
+  readonly source: string
+}
+
+export interface StyledPluginEditorConfigurationEnvelope {
+  readonly editorConfiguration: StyledPluginEditorConfiguration
+}
+
 /** Tag name whose template is a style fragment (`css`), a value-shaped one included. */
 export const CSS_TAG_NAME = 'css'
 
@@ -95,31 +107,40 @@ export class PluginConfigurationManager {
   public updateFromPluginConfig(config: unknown, logger?: ConfigurationLogger) {
     const reporter = createReporter(logger)
     const defaults = PluginConfigurationManager.defaultConfiguration
-    let settings: Readonly<Record<string, unknown>> = {}
-    if (isRecord(config)) {
-      settings = config
-    } else if (config !== undefined && config !== null) {
+    try {
+      let settings: Readonly<Record<string, unknown>> = {}
+      if (isRecord(config)) {
+        settings = config
+      } else if (config !== undefined && config !== null) {
+        reporter.report(
+          `Ignored the plugin configuration: it accepts an object of plugin settings; received ${describeValue(config)}. The defaults apply.`,
+        )
+      }
+
+      this.configuration = {
+        emmet:
+          cloneConfigurationRecord(
+            normalizeRecord(settings.emmet, 'emmet', 'an object of Emmet options', reporter),
+          ) ?? defaults.emmet,
+        lint:
+          cloneConfigurationRecord({
+            ...defaults.lint,
+            ...normalizeLint(
+              normalizeRecord(settings.lint, 'lint', 'an object of lint settings', reporter),
+              defaults.lint,
+              reporter,
+            ),
+          }) ?? defaults.lint,
+        tags: normalizeTags(settings.tags, reporter) ?? defaults.tags,
+        validate: normalizeBoolean(settings.validate, 'validate', reporter) ?? defaults.validate,
+      }
+      reportUnknownSettings(settings, reporter)
+    } catch {
+      this.configuration = defaults
       reporter.report(
-        `Ignored the plugin configuration: it accepts an object of plugin settings; received ${describeValue(config)}. The defaults apply.`,
+        'Ignored the plugin configuration because it could not be read safely. The defaults apply.',
       )
     }
-
-    this.configuration = {
-      emmet:
-        normalizeRecord(settings.emmet, 'emmet', 'an object of Emmet options', reporter) ??
-        defaults.emmet,
-      lint: {
-        ...defaults.lint,
-        ...normalizeLint(
-          normalizeRecord(settings.lint, 'lint', 'an object of lint settings', reporter),
-          defaults.lint,
-          reporter,
-        ),
-      },
-      tags: normalizeTags(settings.tags, reporter) ?? defaults.tags,
-      validate: normalizeBoolean(settings.validate, 'validate', reporter) ?? defaults.validate,
-    }
-    reportUnknownSettings(settings, reporter)
 
     for (const listener of this.updateListeners) {
       listener()
@@ -318,7 +339,17 @@ function normalizeValidProperties(
   }
   const names: string[] = []
   const rejected: unknown[] = []
-  for (const item of value) {
+  const itemCount = getArrayLength(value)
+  if (itemCount === undefined) {
+    reporter.reportRejected(
+      `lint.${VALID_PROPERTIES_SETTING}`,
+      'a list of property names, such as ["margin-vertical"]',
+      value,
+    )
+    return undefined
+  }
+  for (let index = 0; index < itemCount; index++) {
+    const item: unknown = value[index]
     if (typeof item === 'string') {
       names.push(item)
     } else {
@@ -337,13 +368,72 @@ function normalizeTags(value: unknown, reporter: Reporter): ReadonlyArray<string
   if (typeof value === 'string') {
     return [value]
   }
-  if (Array.isArray(value) && value.every((item): item is string => typeof item === 'string')) {
-    return value
+  if (Array.isArray(value)) {
+    const tagCount = getArrayLength(value)
+    if (tagCount !== undefined) {
+      const tags: string[] = []
+      for (let index = 0; index < tagCount; index++) {
+        const item: unknown = value[index]
+        if (typeof item !== 'string') {
+          reporter.reportRejected('tags', 'a list of tag names, such as ["styled", "css"]', value)
+          return undefined
+        }
+        tags.push(item)
+      }
+      return tags
+    }
   }
   if (value !== undefined) {
     reporter.reportRejected('tags', 'a list of tag names, such as ["styled", "css"]', value)
   }
   return undefined
+}
+
+function getArrayLength(value: ReadonlyArray<unknown>): number | undefined {
+  const length: unknown = value.length
+  return typeof length === 'number' && Number.isSafeInteger(length) && length >= 0
+    ? length
+    : undefined
+}
+
+function cloneConfigurationRecord(
+  value: Readonly<Record<string, unknown>> | undefined,
+): Record<string, unknown> | undefined {
+  if (value === undefined) {
+    return undefined
+  }
+  return cloneConfigurationValue(value, new WeakMap()) as Record<string, unknown>
+}
+
+function cloneConfigurationValue(value: unknown, seen: WeakMap<object, unknown>): unknown {
+  if (typeof value === 'function') {
+    throw new TypeError('Callable configuration values cannot be snapshotted safely.')
+  }
+  if (value === null || typeof value !== 'object') {
+    return value
+  }
+  const cached = seen.get(value)
+  if (cached !== undefined) {
+    return cached
+  }
+  if (Array.isArray(value)) {
+    const clone: unknown[] = []
+    seen.set(value, clone)
+    const length = getArrayLength(value)
+    if (length === undefined) {
+      throw new TypeError('Configuration array length is invalid.')
+    }
+    for (let index = 0; index < length; index++) {
+      clone.push(cloneConfigurationValue(value[index], seen))
+    }
+    return clone
+  }
+  const clone: Record<string, unknown> = {}
+  seen.set(value, clone)
+  for (const [name, item] of Object.entries(value)) {
+    clone[name] = cloneConfigurationValue(item, seen)
+  }
+  return clone
 }
 
 function normalizeBoolean(value: unknown, name: string, reporter: Reporter): boolean | undefined {
@@ -400,13 +490,7 @@ export function describeValue(value: unknown): string {
  * tsserver's plugin creation and configurePlugin handling, where a throw fails the request.
  */
 function createReporter(logger: ConfigurationLogger | undefined): Reporter {
-  const report = (message: string) => {
-    try {
-      logger?.log(message)
-    } catch {
-      /** Logging is best effort; the normalized configuration is what matters. */
-    }
-  }
+  const report = (message: string) => safelyLog(logger, message)
   return {
     report,
     reportRejected(name, accepted, value, defaultNote = 'The default applies.') {
@@ -414,5 +498,13 @@ function createReporter(logger: ConfigurationLogger | undefined): Reporter {
         `Ignored the plugin setting ${name}: it accepts ${accepted}; received ${describeValue(value)}. ${defaultNote}`,
       )
     },
+  }
+}
+
+function safelyLog(logger: ConfigurationLogger | undefined, message: string): void {
+  try {
+    logger?.log(message)
+  } catch {
+    /** Logging is best effort; the normalized configuration is what matters. */
   }
 }
