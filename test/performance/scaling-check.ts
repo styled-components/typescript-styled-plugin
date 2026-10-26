@@ -380,7 +380,11 @@ function buildStringAndCodeMultilinePlaceholderCase(count: number): TextCase {
 interface TextCheckCase {
   readonly build: (count: number) => TextCase
   readonly label: string
+  readonly n?: number
 }
+
+/** For cases whose N=6,000 run takes about one CPU clock tick, where CI quantization (0.000ms or 1.000ms) distorts the ratio. */
+const COARSE_CLOCK_TEXT_CHECK_N = 24_000
 
 /** Each case is timed through getTemplateSubstitutions with its text and spans. */
 const substitutionCases: readonly TextCheckCase[] = [
@@ -437,6 +441,7 @@ const substitutionCases: readonly TextCheckCase[] = [
     build: (count) =>
       repeatUnit({ count, expectedUnit: 'xxxxxx ', prefix: '/* ', suffix: '*/', unit: '${aaa} ' }),
     label: 'placeholders inside one block comment',
+    n: COARSE_CLOCK_TEXT_CHECK_N,
   },
   /**
    * Every placeholder's name scan reaches the same name end, which must be found once, not once
@@ -446,6 +451,7 @@ const substitutionCases: readonly TextCheckCase[] = [
     build: (count) =>
       repeatUnit({ count, expectedUnit: '#{x  }', suffix: '-x: 1px;', unit: PLACEHOLDER }),
     label: 'adjacent placeholders joined into one property name',
+    n: COARSE_CLOCK_TEXT_CHECK_N,
   },
   /** Each condition looks back over one word, never to the at-keyword, and becomes "(x   )". */
   {
@@ -541,6 +547,7 @@ const substitutionCases: readonly TextCheckCase[] = [
     build: (count) =>
       repeatUnit({ count, expectedUnit: 'xxxxxx;/*', prefix: '/*', unit: '${aaa};/*' }),
     label: 'statements each opening an unterminated comment',
+    n: COARSE_CLOCK_TEXT_CHECK_N,
   },
   /** Out-of-order spans take normalizeSpans' copy-and-sort path, which must stay near-linear. */
   {
@@ -586,6 +593,7 @@ const escapeCases: readonly TextCheckCase[] = [
       text: 'a\\x62'.repeat(count),
     }),
     label: 'escape runs inside one name',
+    n: COARSE_CLOCK_TEXT_CHECK_N,
   },
 ]
 
@@ -604,10 +612,11 @@ function defineTextCheck(
   name: string,
   build: (count: number) => TextCase,
   transform: (textCase: TextCase) => string,
+  n: number = SUBSTITUTION_CHECK_N,
 ): ScalingCheck {
   const caseForSize = cachedBySize(build)
   return defineCheck({
-    n: SUBSTITUTION_CHECK_N,
+    n,
     name,
     run: (size) => transform(caseForSize(size)),
     verify: (result, size) => compareText(caseForSize(size).expected, result),
@@ -864,14 +873,20 @@ const manyTemplateContextsForSize = cachedBySize((size) =>
 )
 
 const checks: readonly ScalingCheck[] = [
-  ...substitutionCases.map(({ build, label }) =>
-    defineTextCheck(`substitution (${label})`, build, ({ spans, text }) =>
-      getTemplateSubstitutions(text, spans),
+  ...substitutionCases.map(({ build, label, n }) =>
+    defineTextCheck(
+      `substitution (${label})`,
+      build,
+      ({ spans, text }) => getTemplateSubstitutions(text, spans),
+      n,
     ),
   ),
-  ...escapeCases.map(({ build, label }) =>
-    defineTextCheck(`JavaScript escape replacement (${label})`, build, ({ text }) =>
-      replaceJavaScriptEscapes(text),
+  ...escapeCases.map(({ build, label, n }) =>
+    defineTextCheck(
+      `JavaScript escape replacement (${label})`,
+      build,
+      ({ text }) => replaceJavaScriptEscapes(text),
+      n,
     ),
   ),
   ...diagnosticsCases.map(defineDiagnosticsCheck),
