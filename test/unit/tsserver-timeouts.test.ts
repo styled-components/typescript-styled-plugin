@@ -1,6 +1,6 @@
 import { assert, describe, it } from 'vitest'
 
-import { parsePositiveInteger } from '../e2e/tsserver-fixture/timeouts'
+import { MAX_RESPONSE_TIMEOUT_MS, parsePositiveInteger } from '../e2e/tsserver-fixture/timeouts'
 
 describe('parsePositiveInteger', () => {
   it('returns undefined for an unset variable, so the default applies', () => {
@@ -24,4 +24,20 @@ describe('parsePositiveInteger', () => {
       )
     },
   )
+
+  it('reserves headroom when parsing the tsserver response timeout', () => {
+    assert.strictEqual(
+      parsePositiveInteger('TIMEOUT_MS', String(MAX_RESPONSE_TIMEOUT_MS), MAX_RESPONSE_TIMEOUT_MS),
+      MAX_RESPONSE_TIMEOUT_MS,
+    )
+    assert.throws(
+      () =>
+        parsePositiveInteger(
+          'TIMEOUT_MS',
+          String(MAX_RESPONSE_TIMEOUT_MS + 1),
+          MAX_RESPONSE_TIMEOUT_MS,
+        ),
+      `TIMEOUT_MS is "${MAX_RESPONSE_TIMEOUT_MS + 1}", which is not a whole number of milliseconds from 1 to ${MAX_RESPONSE_TIMEOUT_MS}.`,
+    )
+  })
 })
