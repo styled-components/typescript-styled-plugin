@@ -18,4 +18,21 @@ describe('Hover', () => {
     assert.match(documentation, /Sets the color/i)
     assert.deepEqual({ end: quickInfo.end, start: quickInfo.start }, source.range('declaration'))
   })
+
+  it('should return CSS documentation for a property inside a keyframes block', async (context) => {
+    const server = startServer(context)
+    const source = mark(
+      'const animation = keyframes`0% { ⟨declaration⟩opaci⟨caret⟩ty: 0⟨/declaration⟩; }`',
+    )
+    const file = server.open(source.text)
+
+    const quickInfo = bodyOf(await server.request('quickinfo', { file, ...source.at('caret') }))
+
+    const documentation =
+      typeof quickInfo.documentation === 'string'
+        ? quickInfo.documentation
+        : quickInfo.documentation.map((part) => part.text).join('')
+    assert.match(documentation, /Opacity of an element/i)
+    assert.deepEqual({ end: quickInfo.end, start: quickInfo.start }, source.range('declaration'))
+  })
 })

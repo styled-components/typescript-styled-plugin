@@ -2141,9 +2141,17 @@ describe('StyledTemplateLanguageService', () => {
     assert.strictEqual(createVirtualDocument.mock.calls.length, 2)
     assert.strictEqual(factory.parsedDocuments.length, 2)
 
-    service.getSemanticDiagnostics(createContext('display:', 'keyframes'))
+    const keyframesContext = createContext('display:', 'keyframes')
+    service.getSemanticDiagnostics(keyframesContext)
     assert.strictEqual(createVirtualDocument.mock.calls.length, 3)
-    assert.strictEqual(factory.parsedDocuments.length, 3)
+    assert.strictEqual(factory.parsedDocuments.length, 4)
+    assert.match(factory.parsedDocuments[2]?.getText() ?? '', /^@keyframes/)
+    assert.match(factory.parsedDocuments[3]?.getText() ?? '', /^:root\{/)
+
+    /** Completions reuse the session document, which stays the keyframes document. */
+    service.getCompletionsAtPosition(keyframesContext, keyframesContext.toPosition(0))
+    assert.strictEqual(createVirtualDocument.mock.calls.length, 3)
+    assert.strictEqual(factory.parsedDocuments.length, 4)
     assert.match(factory.parsedDocuments[2]?.getText() ?? '', /^@keyframes/)
   })
 
@@ -2301,7 +2309,40 @@ describe('StyledTemplateLanguageService', () => {
     service.getSemanticDiagnostics(createContext('color: red;', 'css'))
     service.getSemanticDiagnostics(createContext('color: red;', 'keyframes'))
 
+    /** css once, then the keyframes document and its property reading. */
+    assert.strictEqual(factory.validationRequests, 3)
+  })
+
+  it('should validate a keyframes template under the property reading once, then answer from the cache', () => {
+    const factory = createFakeLanguageServiceFactory()
+    const service = createServiceWithFactory(factory)
+
+    service.getSemanticDiagnostics(createContext('0% { opacitty: 0; }', 'keyframes'))
+    service.getSemanticDiagnostics(createContext('0% { opacitty: 0; }', 'keyframes'))
+
     assert.strictEqual(factory.validationRequests, 2)
+  })
+
+  it('should validate a nested @keyframes rule under the property reading once, then answer from the cache', () => {
+    const factory = createFakeLanguageServiceFactory()
+    const service = createServiceWithFactory(factory)
+    const text = '@keyframes fade {\n  0% { opacitty: 0; }\n}'
+
+    service.getSemanticDiagnostics(createContext(text, 'styled.div'))
+    service.getSemanticDiagnostics(createContext(text, 'styled.div'))
+
+    assert.strictEqual(factory.validationRequests, 2)
+  })
+
+  it('should not validate a second time when @keyframes occurs only inside a string', () => {
+    const factory = createFakeLanguageServiceFactory()
+    const service = createServiceWithFactory(factory)
+
+    service.getSemanticDiagnostics(
+      createContext('content: "@keyframes fade { 0% { opacitty: 0; } }";', 'styled.div'),
+    )
+
+    assert.strictEqual(factory.validationRequests, 1)
   })
 
   it('should not reuse a raw validation result for a third-party provider whose canReuseVirtualDocument returns false', () => {

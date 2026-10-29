@@ -21,6 +21,8 @@ import {
   CSS_DIAGNOSTIC_CODE,
   EMPTY_RULESET_DIAGNOSTIC_CODE,
   RULE_OR_SELECTOR_EXPECTED_DIAGNOSTIC_CODE,
+  UNKNOWN_PROPERTY_DIAGNOSTIC_CODE,
+  UNKNOWN_VENDOR_SPECIFIC_PROPERTY_DIAGNOSTIC_CODE,
 } from './css-diagnostic-code.ts'
 import type { ScssLanguageService } from './styles-language-services.ts'
 
@@ -164,6 +166,14 @@ export class DiagnosticsFeature {
       diagnostics = diagnostics.filter((diagnostic) =>
         valueDiagnostics.some((other) => isSameDiagnostic(diagnostic, other)),
       )
+    }
+    const propertyReading = styledProvider?.createKeyframePropertyReadingDocument(context)
+    if (propertyReading) {
+      const propertyDiagnostics = this.scssLanguageService.doValidation(
+        propertyReading,
+        this.scssLanguageService.parseStylesheet(propertyReading),
+      )
+      diagnostics = appendKeyframePropertyDiagnostics(diagnostics, propertyDiagnostics)
     }
     if (styledProvider) {
       diagnostics = filterEmptyRulesWithInterpolations(
@@ -336,6 +346,37 @@ function findStrayClosingBraceOffset(text: string): number | undefined {
     index++
   }
   return undefined
+}
+
+/**
+ * Adds unknown-property diagnostics from the keyframe property reading (docs/architecture.md,
+ * "Virtual document"). Every other rule stays on the main reading, so a vendor-prefix warning for
+ * a known prefixed property inside a keyframe block is not newly reported.
+ */
+function appendKeyframePropertyDiagnostics(
+  diagnostics: Diagnostic[],
+  propertyDiagnostics: readonly Diagnostic[],
+): Diagnostic[] {
+  const added: Diagnostic[] = []
+  for (const diagnostic of propertyDiagnostics) {
+    if (!isKeyframePropertyDiagnostic(diagnostic)) {
+      continue
+    }
+    const alreadyReported =
+      diagnostics.some((existing) => isSameDiagnostic(existing, diagnostic)) ||
+      added.some((existing) => isSameDiagnostic(existing, diagnostic))
+    if (!alreadyReported) {
+      added.push(diagnostic)
+    }
+  }
+  return added.length === 0 ? diagnostics : [...diagnostics, ...added]
+}
+
+function isKeyframePropertyDiagnostic(diagnostic: Diagnostic): boolean {
+  return (
+    diagnostic.code === UNKNOWN_PROPERTY_DIAGNOSTIC_CODE ||
+    diagnostic.code === UNKNOWN_VENDOR_SPECIFIC_PROPERTY_DIAGNOSTIC_CODE
+  )
 }
 
 /** Same code, message, and range: one diagnostic under both readings of a single-identifier fragment. */

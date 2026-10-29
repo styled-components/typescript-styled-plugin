@@ -58,6 +58,20 @@ describe('Code fixes', () => {
     assert.include(descriptions(await fixesAt(file, at(source, 'caret'))), renameToBorder)
   })
 
+  it('should rename an unknown property inside a keyframes block', async () => {
+    const source = mark('const animation = keyframes`0% { opac⟨caret⟩itty: 0; }`')
+    const file = server().open(source.text)
+
+    assert.include(descriptions(await fixesAt(file, at(source, 'caret'))), "Rename to 'opacity'")
+  })
+
+  it('should rename an unknown property inside a nested keyframes rule', async () => {
+    const source = mark('const Box = styled.div`@keyframes fade { 0% { opac⟨caret⟩itty: 0; } }`')
+    const file = server().open(source.text)
+
+    assert.include(descriptions(await fixesAt(file, at(source, 'caret'))), "Rename to 'opacity'")
+  })
+
   it('should not return CSS code fixes for unrelated diagnostic codes', async () => {
     const source = mark('const unrelated = css`b⟨caret⟩oarder: 1px solid black;`')
     const file = server().open(source.text)
