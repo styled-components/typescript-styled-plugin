@@ -659,6 +659,14 @@ function createEscapedDiagnosticsTemplate(ruleCount: number): string {
   ).join('\n')
 }
 
+/** One misspelled property ("colr") per nested `@keyframes` rule. */
+function createKeyframeDiagnosticsTemplate(blockCount: number): string {
+  return Array.from(
+    { length: blockCount },
+    (_, index) => `@keyframes fade-${index} { 0% { colr: red; } 100% { opacity: 1; } }`,
+  ).join('\n')
+}
+
 /** One misspelled property ("colr") per nested block `@layer`, whose prelude the virtual document rewrites. */
 function createLayerDiagnosticsTemplate(layerCount: number): string {
   return Array.from(
@@ -704,6 +712,11 @@ const diagnosticsCases: readonly DiagnosticsCheckCase[] = [
     context: contextForSize(createLayerDiagnosticsTemplate),
     n: LAYER_DIAGNOSTICS_CHECK_N,
     name: 'diagnostics (many nested block @layer rules in one template)',
+  },
+  {
+    context: contextForSize(createKeyframeDiagnosticsTemplate),
+    n: DIAGNOSTICS_TEMPLATE_CHECK_N,
+    name: 'diagnostics (many nested @keyframes rules in one template)',
   },
   {
     context: contextForSize(createEscapedDiagnosticsTemplate),

@@ -216,7 +216,8 @@ function buildVirtualDocument(
   wrapper: string,
   topLevelIsNested: boolean,
 ): TextDocument {
-  const contents = `${wrapper}${normalizeVirtualText(getTemplateCssText(context), topLevelIsNested)}\n}`
+  const body = normalizeVirtualText(getTemplateCssText(context), topLevelIsNested)
+  const contents = `${wrapper}${body}\n}`
   const lineMap = createTemplateLineMap(context)
 
   const positionAt = (offset: number): ts.LineAndCharacter =>
