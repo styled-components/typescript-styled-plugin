@@ -1,8 +1,10 @@
 import type { TemplateContext } from 'typescript-template-language-service-decorator'
 import type * as ts from 'typescript/lib/tsserverlibrary.js'
-import type { Diagnostic } from 'vscode-css-languageservice'
+import { getDefaultCSSDataProvider, type Diagnostic } from 'vscode-css-languageservice'
+import type { TextDocument } from 'vscode-languageserver-textdocument'
 import { DiagnosticSeverity } from 'vscode-languageserver-types'
 
+import type { StyledPluginConfiguration } from '../configuration/plugin-configuration.ts'
 import { pluginIdentity } from '../tsserver/plugin-identity.ts'
 import { createCssCodeScanState, nonCodeEnd } from '../virtual-document/css-code-scanner.ts'
 import { getTemplateCssText } from '../virtual-document/javascript-escapes.ts'
@@ -74,6 +76,7 @@ export class DiagnosticsFeature {
     private readonly virtualDocumentSessionProvider: VirtualDocumentSessionProvider,
     private readonly scssLanguageService: ScssLanguageService,
     private readonly isValidationEnabled: () => boolean,
+    private readonly lintSettings: () => StyledPluginConfiguration['lint'],
   ) {}
 
   /** Lint settings change what doValidation returns for the same text, so a config update invalidates every entry. */
@@ -167,13 +170,16 @@ export class DiagnosticsFeature {
         valueDiagnostics.some((other) => isSameDiagnostic(diagnostic, other)),
       )
     }
-    const propertyReading = styledProvider?.createKeyframePropertyReadingDocument(context)
-    if (propertyReading) {
-      const propertyDiagnostics = this.scssLanguageService.doValidation(
-        propertyReading,
-        this.scssLanguageService.parseStylesheet(propertyReading),
+    if (styledProvider) {
+      const propertyDiagnostics = keyframePropertyDiagnostics(
+        document,
+        stylesheet,
+        this.lintSettings(),
+        diagnostics,
       )
-      diagnostics = appendKeyframePropertyDiagnostics(diagnostics, propertyDiagnostics)
+      if (propertyDiagnostics.length > 0) {
+        diagnostics = [...diagnostics, ...propertyDiagnostics]
+      }
     }
     if (styledProvider) {
       diagnostics = filterEmptyRulesWithInterpolations(
@@ -349,34 +355,359 @@ function findStrayClosingBraceOffset(text: string): number | undefined {
 }
 
 /**
- * Adds unknown-property diagnostics from the keyframe property reading (docs/architecture.md,
- * "Virtual document"). Every other rule stays on the main reading, so a vendor-prefix warning for
- * a known prefixed property inside a keyframe block is not newly reported.
+ * vscode-css-languageservice 6.3.10 node types. The public stylesheet type is `{}`, so the walk
+ * reads the parsed nodes structurally and also accepts the class name: a later release can change
+ * the number or the name and the check still holds for the one that stayed.
  */
-function appendKeyframePropertyDiagnostics(
-  diagnostics: Diagnostic[],
-  propertyDiagnostics: readonly Diagnostic[],
+const DECLARATION_NODE_TYPE = 19
+const KEYFRAME_NODE_TYPE = 53
+const KEYFRAME_SELECTOR_NODE_TYPE = 65
+
+/** The standard at-rule. A vendor-prefixed keyword (`@-webkit-keyframes`) is a different rule. */
+const STANDARD_KEYFRAMES_KEYWORD = '@keyframes'
+
+/**
+ * Less merge markers (`font-size+`, `font-size_`) that `Property.getName` trims before a property
+ * is checked. The diagnostic range stays the whole property node.
+ */
+const TRAILING_LESS_MERGE = /[_+]+$/
+
+const UNKNOWN_PROPERTY_MESSAGE_PREFIX = "Unknown property: '"
+const UNKNOWN_VENDOR_SPECIFIC_PROPERTY_MESSAGE = 'Unknown vendor specific property.'
+
+type LintLevel = 'error' | 'ignore' | 'warning'
+type ReportedLintLevel = Exclude<LintLevel, 'ignore'>
+
+interface CssNode {
+  readonly children?: readonly unknown[]
+  readonly declarations?: unknown
+  readonly identifier?: unknown
+  readonly keyword?: unknown
+  readonly length?: number
+  readonly offset?: number
+  readonly parent?: unknown
+  readonly property?: unknown
+  readonly type?: number
+  readonly value?: unknown
+}
+
+interface NodeSpan {
+  readonly end: number
+  readonly start: number
+}
+
+let knownCssPropertyNames: ReadonlySet<string> | undefined
+
+/**
+ * Unknown-property diagnostics for declarations in a keyframe selector (docs/architecture.md,
+ * "Virtual document"). `LintVisitor.visitKeyframe` never checks them. The range is the property
+ * node on this document, which is the stylesheet `doCodeActions` reads, so a rename fix finds it.
+ * Already-reported diagnostics are skipped in one pass over the existing list.
+ */
+function keyframePropertyDiagnostics(
+  document: TextDocument,
+  stylesheet: unknown,
+  lint: StyledPluginConfiguration['lint'],
+  existing: readonly Diagnostic[],
 ): Diagnostic[] {
+  const unknownLevel = reportedLintLevel(lintLevel(lint, 'unknownProperties', 'warning'))
+  const vendorLevel = reportedLintLevel(
+    lintLevel(lint, 'unknownVendorSpecificProperties', 'ignore'),
+  )
+  if (unknownLevel === undefined && vendorLevel === undefined) {
+    return []
+  }
+  const text = document.getText()
+  if (!containsStandardKeyframesKeyword(text)) {
+    return []
+  }
+  const known = knownCssProperties()
+  const valid = validPropertyNames(lint)
+  const reported = new Set(existing.map(diagnosticIdentity))
   const added: Diagnostic[] = []
-  for (const diagnostic of propertyDiagnostics) {
-    if (!isKeyframePropertyDiagnostic(diagnostic)) {
+  for (const selector of keyframeSelectors(stylesheet)) {
+    if (!insideStandardKeyframe(selector, text)) {
       continue
     }
-    const alreadyReported =
-      diagnostics.some((existing) => isSameDiagnostic(existing, diagnostic)) ||
-      added.some((existing) => isSameDiagnostic(existing, diagnostic))
-    if (!alreadyReported) {
+    const declarations = selector.declarations
+    if (!isCssNode(declarations) || !Array.isArray(declarations.children)) {
+      continue
+    }
+    for (const child of declarations.children) {
+      if (!isCssNode(child) || !isDeclarationNode(child)) {
+        continue
+      }
+      const diagnostic = declarationDiagnostic(
+        document,
+        text,
+        child,
+        known,
+        valid,
+        unknownLevel,
+        vendorLevel,
+      )
+      if (!diagnostic) {
+        continue
+      }
+      const identity = diagnosticIdentity(diagnostic)
+      if (reported.has(identity)) {
+        continue
+      }
+      reported.add(identity)
       added.push(diagnostic)
     }
   }
-  return added.length === 0 ? diagnostics : [...diagnostics, ...added]
+  return added
 }
 
-function isKeyframePropertyDiagnostic(diagnostic: Diagnostic): boolean {
-  return (
-    diagnostic.code === UNKNOWN_PROPERTY_DIAGNOSTIC_CODE ||
-    diagnostic.code === UNKNOWN_VENDOR_SPECIFIC_PROPERTY_DIAGNOSTIC_CODE
+function declarationDiagnostic(
+  document: TextDocument,
+  text: string,
+  declaration: CssNode,
+  known: ReadonlySet<string>,
+  valid: ReadonlySet<string>,
+  unknownLevel: ReportedLintLevel | undefined,
+  vendorLevel: ReportedLintLevel | undefined,
+): Diagnostic | undefined {
+  if (!isCheckedDeclaration(declaration)) {
+    return undefined
+  }
+  const property = declaration.property
+  if (!isCssNode(property)) {
+    return undefined
+  }
+  const span = nodeSpan(property)
+  if (!span) {
+    return undefined
+  }
+  const writtenName = text.slice(span.start, span.end).replace(TRAILING_LESS_MERGE, '')
+  if (writtenName.length === 0) {
+    return undefined
+  }
+  const fullName = writtenName.toLowerCase()
+  if (fullName.startsWith('-')) {
+    if (fullName.startsWith('--') || vendorLevel === undefined) {
+      return undefined
+    }
+    if (isKnownProperty(known, fullName) || valid.has(fullName)) {
+      return undefined
+    }
+    return propertyDiagnostic(
+      document,
+      span,
+      UNKNOWN_VENDOR_SPECIFIC_PROPERTY_DIAGNOSTIC_CODE,
+      UNKNOWN_VENDOR_SPECIFIC_PROPERTY_MESSAGE,
+      vendorLevel,
+    )
+  }
+  if (unknownLevel === undefined) {
+    return undefined
+  }
+  const strippedName =
+    fullName.startsWith('*') || fullName.startsWith('_') ? fullName.slice(1) : fullName
+  if (
+    isKnownProperty(known, fullName) ||
+    isKnownProperty(known, strippedName) ||
+    valid.has(strippedName)
+  ) {
+    return undefined
+  }
+  return propertyDiagnostic(
+    document,
+    span,
+    UNKNOWN_PROPERTY_DIAGNOSTIC_CODE,
+    `${UNKNOWN_PROPERTY_MESSAGE_PREFIX}${writtenName}'`,
+    unknownLevel,
   )
+}
+
+function propertyDiagnostic(
+  document: TextDocument,
+  span: NodeSpan,
+  code: string,
+  message: string,
+  level: ReportedLintLevel,
+): Diagnostic {
+  return {
+    code,
+    message,
+    range: {
+      end: document.positionAt(span.end),
+      start: document.positionAt(span.start),
+    },
+    severity: level === 'error' ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning,
+    source: document.languageId,
+  }
+}
+
+/** One search for "@". A template with none never walks the stylesheet. */
+function containsStandardKeyframesKeyword(text: string): boolean {
+  const needle = STANDARD_KEYFRAMES_KEYWORD
+  let from = 0
+  while (from < text.length) {
+    const index = text.indexOf('@', from)
+    if (index === -1 || index + needle.length > text.length) {
+      return false
+    }
+    let matches = true
+    for (let offset = 0; offset < needle.length; offset++) {
+      const character = text[index + offset]
+      if (character !== needle[offset] && character.toLowerCase() !== needle[offset]) {
+        matches = false
+        break
+      }
+    }
+    if (matches) {
+      return true
+    }
+    from = index + 1
+  }
+  return false
+}
+
+function keyframeSelectors(stylesheet: unknown): readonly CssNode[] {
+  const selectors: CssNode[] = []
+  const stack: unknown[] = [stylesheet]
+  while (stack.length > 0) {
+    const current = stack.pop()
+    if (!isCssNode(current)) {
+      continue
+    }
+    if (isKeyframeSelectorNode(current)) {
+      selectors.push(current)
+    }
+    const { children } = current
+    if (!Array.isArray(children)) {
+      continue
+    }
+    for (let index = children.length - 1; index >= 0; index--) {
+      stack.push(children[index])
+    }
+  }
+  return selectors
+}
+
+function insideStandardKeyframe(selector: CssNode, text: string): boolean {
+  let current: unknown = selector.parent
+  while (isCssNode(current)) {
+    if (isKeyframeNode(current)) {
+      return isStandardKeyframeKeyword(current, text)
+    }
+    current = current.parent
+  }
+  return false
+}
+
+function isStandardKeyframeKeyword(keyframe: CssNode, text: string): boolean {
+  if (!isCssNode(keyframe.keyword)) {
+    return false
+  }
+  const span = nodeSpan(keyframe.keyword)
+  return (
+    span !== undefined &&
+    text.slice(span.start, span.end).toLowerCase() === STANDARD_KEYFRAMES_KEYWORD
+  )
+}
+
+/**
+ * A declaration the language service would lint (`LintVisitor.isCSSDeclaration`): a property, a
+ * value, and an identifier that holds no interpolation. An interpolated name is not a property
+ * the stylesheet can prove.
+ */
+function isCheckedDeclaration(declaration: CssNode): boolean {
+  if (!isCssNode(declaration.value) || !isCssNode(declaration.property)) {
+    return false
+  }
+  const identifier = declaration.property.identifier
+  if (!isCssNode(identifier)) {
+    return false
+  }
+  return !Array.isArray(identifier.children) || identifier.children.length === 0
+}
+
+function isKeyframeSelectorNode(node: CssNode): boolean {
+  return node.type === KEYFRAME_SELECTOR_NODE_TYPE || constructorName(node) === 'KeyframeSelector'
+}
+
+function isKeyframeNode(node: CssNode): boolean {
+  return node.type === KEYFRAME_NODE_TYPE || constructorName(node) === 'Keyframe'
+}
+
+function isDeclarationNode(node: CssNode): boolean {
+  return node.type === DECLARATION_NODE_TYPE || constructorName(node) === 'Declaration'
+}
+
+function constructorName(node: object): string {
+  const ctor = node.constructor
+  return typeof ctor === 'function' ? ctor.name : ''
+}
+
+function isCssNode(value: unknown): value is CssNode {
+  return typeof value === 'object' && value !== null
+}
+
+function nodeSpan(node: CssNode): NodeSpan | undefined {
+  const start = node.offset
+  const length = node.length
+  if (typeof start !== 'number' || typeof length !== 'number' || start < 0 || length <= 0) {
+    return undefined
+  }
+  const end = start + length
+  return end > start ? { end, start } : undefined
+}
+
+function knownCssProperties(): ReadonlySet<string> {
+  if (!knownCssPropertyNames) {
+    const names = new Set<string>()
+    for (const property of getDefaultCSSDataProvider().provideProperties()) {
+      names.add(property.name)
+    }
+    knownCssPropertyNames = names
+  }
+  return knownCssPropertyNames
+}
+
+function isKnownProperty(known: ReadonlySet<string>, name: string): boolean {
+  return known.has(name.toLowerCase())
+}
+
+function validPropertyNames(lint: StyledPluginConfiguration['lint']): ReadonlySet<string> {
+  const value: unknown = lint.validProperties
+  if (!Array.isArray(value)) {
+    return new Set()
+  }
+  const names = new Set<string>()
+  for (const entry of value) {
+    if (typeof entry !== 'string') {
+      continue
+    }
+    const name = entry.trim().toLowerCase()
+    if (name.length > 0) {
+      names.add(name)
+    }
+  }
+  return names
+}
+
+function lintLevel(
+  lint: StyledPluginConfiguration['lint'],
+  name: string,
+  defaultLevel: LintLevel,
+): LintLevel {
+  const value: unknown = lint[name]
+  if (value === 'error' || value === 'ignore' || value === 'warning') {
+    return value
+  }
+  return defaultLevel
+}
+
+function reportedLintLevel(level: LintLevel): ReportedLintLevel | undefined {
+  return level === 'ignore' ? undefined : level
+}
+
+function diagnosticIdentity(diagnostic: Diagnostic): string {
+  const { end, start } = diagnostic.range
+  return `${diagnostic.code ?? ''}\u0000${diagnostic.message}\u0000${start.line}:${start.character}:${end.line}:${end.character}`
 }
 
 /** Same code, message, and range: one diagnostic under both readings of a single-identifier fragment. */

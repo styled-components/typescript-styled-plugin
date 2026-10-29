@@ -659,7 +659,7 @@ function createEscapedDiagnosticsTemplate(ruleCount: number): string {
   ).join('\n')
 }
 
-/** One misspelled property ("colr") per nested `@keyframes` rule, whose prelude the property reading rewrites. */
+/** One misspelled property ("colr") per nested `@keyframes` rule. */
 function createKeyframeDiagnosticsTemplate(blockCount: number): string {
   return Array.from(
     { length: blockCount },

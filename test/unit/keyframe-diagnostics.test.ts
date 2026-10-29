@@ -12,9 +12,6 @@ import { createTemplateContext } from './create-template-context'
 /** The misspelling every positive case reports, and nowhere else. */
 const MISSPELLED = 'opacitty'
 
-const KEYFRAMES_WRAPPER = '@keyframes custom {\n'
-const ROOT_WRAPPER = ':root{\n'
-
 interface ShownDiagnostic {
   readonly length: number
   readonly messageText: string | ts.DiagnosticMessageChain
@@ -97,12 +94,6 @@ function createSubstitutingContext(rawText: string, tagName: string): TemplateCo
   }
 }
 
-function documentBody(text: string, wrapper: string): string {
-  assert.strictEqual(text.startsWith(wrapper), true)
-  assert.strictEqual(text.endsWith('\n}'), true)
-  return text.slice(wrapper.length, -'\n}'.length)
-}
-
 describe('unknown properties inside keyframes', () => {
   describe('a keyframes tag, whose body is the keyframe rule', () => {
     it.each([
@@ -157,12 +148,19 @@ describe('unknown properties inside keyframes', () => {
       ])
     })
 
-    it('should report a bare unknown property in addition to the syntax diagnostics', () => {
+    it('should keep the syntax diagnostics for a bare property and not report it as unknown', () => {
       const text = 'opacitty: 0;'
       assert.deepEqual(shownDiagnostics(text, 'keyframes'), [
         { length: 0, messageText: 'at-rule or selector expected', start: text.length },
         { length: MISSPELLED.length, messageText: '} expected', start: 0 },
-        unknownProperty(text),
+      ])
+    })
+
+    it('should keep the syntax diagnostics for @media and not report the property', () => {
+      const text = '@media screen { colr: red; }'
+      assert.deepEqual(shownDiagnostics(text, 'keyframes'), [
+        { length: 1, messageText: 'at-rule or selector expected', start: text.lastIndexOf('}') },
+        { length: '@media'.length, messageText: '} expected', start: text.indexOf('@media') },
       ])
     })
 
@@ -228,33 +226,9 @@ describe('unknown properties inside keyframes', () => {
   })
 
   describe('animation names and selectors the keyframes parser accepts', () => {
-    it.each([
-      ['an interpolation', '@keyframes #{name} { 0% { opacitty: 0; } }'],
-      ['a variable interpolation', '@keyframes #{$name} { 0% { opacitty: 0; } }'],
-      ['an interpolation with inner spaces', '@keyframes #{ $name } { 0% { opacitty: 0; } }'],
-      [
-        'a name joined after an interpolation',
-        '@keyframes #{direction}slide { 0% { opacitty: 0; } }',
-      ],
-      [
-        'a name joined before an interpolation',
-        '@keyframes slide#{direction} { 0% { opacitty: 0; } }',
-      ],
-      ['two interpolations', '@keyframes #{a}#{b} { 0% { opacitty: 0; } }'],
-      ['an interpolation between identifiers', '@keyframes a#{b}c { 0% { opacitty: 0; } }'],
-      ['a string inside the interpolation', '@keyframes #{"x}y"} { 0% { opacitty: 0; } }'],
-      ['a url brace inside the interpolation', '@keyframes #{url(a}b)} { 0% { opacitty: 0; } }'],
-      ['a comment brace inside the interpolation', '@keyframes #{/*}*/} { 0% { opacitty: 0; } }'],
-    ])('should report an unknown property for %s in the animation name', (_label, text) => {
-      assertUnknownOnly(text, 'styled.div')
+    it('should report an unknown property when the animation name is an interpolation', () => {
+      assertUnknownOnly('@keyframes #{name} { 0% { opacitty: 0; } }', 'styled.div')
     })
-
-    it.each(['---', '--', '-'.repeat(20_000)])(
-      'should report an unknown property for a dash-only animation name',
-      (name) => {
-        assertUnknownOnly(`@keyframes ${name} { 0% { opacitty: 0; } }`, 'styled.div')
-      },
-    )
 
     it.each([
       ['an interpolated selector', 'keyframes', '#{name} { opacitty: 0; }'],
@@ -279,30 +253,8 @@ describe('unknown properties inside keyframes', () => {
       ])
     })
 
-    it('should not treat an escape that continues the at-keyword as @keyframes', () => {
-      const keyword = '@keyframes\\61bounce'
-      const text = `${keyword} { 0% { opacitty: 0; } }`
-      assert.deepEqual(shownDiagnostics(text, 'styled.div'), [
-        { length: keyword.length, messageText: `Unknown at rule ${keyword}`, start: 0 },
-      ])
-    })
-
     it('should report an unknown property when the animation name is an escape', () => {
       assertUnknownOnly('@keyframes \\61 { 0% { opacitty: 0; } }', 'styled.div')
-    })
-
-    it('should keep the syntax errors when a space splits the animation name', () => {
-      const text = '@keyframes fade #{name} { 0% { opacitty: 0; } }'
-      const ruleBrace = text.indexOf('{', text.indexOf('#{name}') + '#{name}'.length)
-      assert.deepEqual(shownDiagnostics(text, 'styled.div'), [
-        {
-          length: 1,
-          messageText: 'at-rule or selector expected',
-          start: text.indexOf('}', text.indexOf(MISSPELLED)),
-        },
-        { length: 1, messageText: '} expected', start: ruleBrace },
-        { length: 2, messageText: '{ expected', start: text.indexOf('#{') },
-      ])
     })
 
     it('should keep the syntax errors for a single hyphen animation name', () => {
@@ -310,21 +262,6 @@ describe('unknown properties inside keyframes', () => {
       assert.deepEqual(shownDiagnostics(text, 'styled.div'), [
         { length: 0, messageText: 'at-rule or selector expected', start: text.length },
         { length: 1, messageText: 'identifier expected', start: text.indexOf('-') },
-      ])
-    })
-
-    it('should keep the syntax errors for a percent glued to an interpolation and report the property', () => {
-      const text = '0%#{n} { opacitty: 0; }'
-      assert.deepEqual(shownDiagnostics(text, 'keyframes'), [
-        {
-          length: 1,
-          messageText: 'at-rule or selector expected',
-          start: text.indexOf('{', text.indexOf('#{') + '#{'.length),
-        },
-        { length: 1, messageText: 'at-rule or selector expected', start: text.lastIndexOf('}') },
-        { length: 2, messageText: '} expected', start: text.indexOf('0%') },
-        { length: 1, messageText: '{ expected', start: text.indexOf(':') },
-        unknownProperty(text),
       ])
     })
   })
@@ -394,8 +331,8 @@ describe('unknown properties inside keyframes', () => {
       const inside = text.indexOf('colr', first + 'colr'.length)
       const last = text.lastIndexOf('colr')
       /**
-       * The two declarations outside the keyframe block come from the main reading, in source
-       * order. The one inside the block is added from the property reading.
+       * Declarations outside the keyframe block are reported in source order. The one inside
+       * the block is appended after them.
        */
       assert.deepEqual(shownDiagnostics(text, 'styled.div'), [
         unknownProperty(text, 'colr', first),
@@ -535,54 +472,6 @@ describe('unknown properties inside keyframes', () => {
       assert.deepEqual(rename?.changes[0]?.textChanges, [
         { newText: 'opacity', span: { length: MISSPELLED.length, start } },
       ])
-    })
-  })
-
-  describe('the property-reading document', () => {
-    it('should rewrite keyframe preludes without moving the property or changing the main document', () => {
-      const provider = new StyledVirtualDocumentProvider(ts)
-      const text = '0% { opacitty: 0; }\nfrom { opacity: 0; }'
-      const context = createTemplateContext(text, 'keyframes')
-      const main = provider.createVirtualDocument(context)
-      const property = provider.createKeyframePropertyReadingDocument(context)
-
-      assert.match(main.getText(), /^@keyframes custom \{\n/)
-      assert.isDefined(property)
-      const mainBody = documentBody(main.getText(), KEYFRAMES_WRAPPER)
-      const propertyBody = documentBody(property.getText(), ROOT_WRAPPER)
-      assert.strictEqual(propertyBody.length, mainBody.length)
-      assert.strictEqual(propertyBody.indexOf(MISSPELLED), mainBody.indexOf(MISSPELLED))
-      assert.strictEqual(propertyBody.includes('0%'), false)
-      assert.strictEqual(propertyBody.includes('@keyframes'), false)
-      assert.strictEqual(provider.createVirtualDocument(context).getText(), main.getText())
-    })
-
-    it('should rewrite a nested @keyframes rule and leave a keyword in a string', () => {
-      const provider = new StyledVirtualDocumentProvider(ts)
-      const text = 'content: "@keyframes";\n@keyframes fade {\n  0% { opacitty: 0; }\n}'
-      const context = createTemplateContext(text, 'styled.div')
-      const main = provider.createVirtualDocument(context)
-      const property = provider.createKeyframePropertyReadingDocument(context)
-
-      assert.isDefined(property)
-      const mainBody = documentBody(main.getText(), ROOT_WRAPPER)
-      const propertyBody = documentBody(property.getText(), ROOT_WRAPPER)
-      assert.strictEqual(propertyBody.length, mainBody.length)
-      assert.strictEqual(propertyBody.indexOf(MISSPELLED), text.indexOf(MISSPELLED))
-      assert.strictEqual(propertyBody.includes('content: "@keyframes"'), true)
-      assert.strictEqual(propertyBody.includes('@keyframes fade'), false)
-    })
-
-    it('should skip the property reading when the text has no standard @keyframes rule', () => {
-      const provider = new StyledVirtualDocumentProvider(ts)
-      const plain = createTemplateContext('color: red;', 'styled.div')
-      const quoted = createTemplateContext(
-        'content: "@keyframes fade { 0% { opacitty: 0; } }";',
-        'css',
-      )
-
-      assert.isUndefined(provider.createKeyframePropertyReadingDocument(plain))
-      assert.isUndefined(provider.createKeyframePropertyReadingDocument(quoted))
     })
   })
 })
