@@ -1,5 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
+import { isDeepStrictEqual } from 'node:util'
+
 import { decorateWithTemplateLanguageService } from 'typescript-template-language-service-decorator'
 import type * as ts from 'typescript/lib/tsserverlibrary.js'
 
@@ -33,13 +35,13 @@ export class TsServerStyledPlugin {
     this.logger = logger
     const editorConfiguration = this.getEditorConfiguration(info)
     this.editorConfiguration = editorConfiguration
-    const isEditorConfiguration = editorConfiguration.updateFromPluginConfig(info.config, logger)
-    const configurationManager = new ProjectConfigurationManager(editorConfiguration)
+    const editorUpdate = editorConfiguration.updateFromPluginConfig(info.config, logger)
+    const configurationManager = new ProjectConfigurationManager(editorConfiguration, info.project)
     const { configuration: projectConfiguration, readSuccessfully } =
       readProjectPluginConfiguration(info, logger)
     configurationManager.updateFromProjectConfig(projectConfiguration, logger)
     if (
-      !isEditorConfiguration &&
+      !editorUpdate.matched &&
       readSuccessfully &&
       isLegacyConfigurationOverride(info.config, projectConfiguration)
     ) {
@@ -82,11 +84,11 @@ export class TsServerStyledPlugin {
   public onConfigurationChanged(config: unknown) {
     const logger = this.logger
     logger?.log('onConfigurationChanged')
-    const isEditorConfiguration = this.editorConfiguration?.updateFromPluginConfig(config, logger)
-    if (isEditorConfiguration === undefined) {
+    const editorUpdate = this.editorConfiguration?.updateFromPluginConfig(config, logger)
+    if (editorUpdate === undefined) {
       return
     }
-    if (!isEditorConfiguration) {
+    if (!editorUpdate.matched) {
       const legacyConfiguration = new PluginConfigurationManager()
       legacyConfiguration.updateFromPluginConfig(config, logger)
       this.editorConfiguration?.activateLegacy(legacyConfiguration.config, logger)
@@ -170,7 +172,11 @@ function isLegacyConfigurationOverride(config: unknown, projectConfiguration: un
     return false
   }
   if (projectConfiguration !== undefined) {
-    return true
+    const runtime = new PluginConfigurationManager()
+    runtime.updateFromPluginConfig(config)
+    const project = new PluginConfigurationManager()
+    project.updateFromPluginConfig(projectConfiguration)
+    return !isDeepStrictEqual(runtime.config, project.config)
   }
   try {
     if (typeof config !== 'object' || config === null || Array.isArray(config)) {

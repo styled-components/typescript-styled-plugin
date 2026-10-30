@@ -1,6 +1,5 @@
 import {
   ConfigurationManager,
-  EDITOR_CONFIGURATION_PROTOCOL_VERSION,
   PluginConfigurationManager,
   type StyledPluginConfiguration,
   type StyledPluginConfigurationInput,
@@ -40,8 +39,6 @@ const typedConfiguration: StyledPluginConfiguration = {
 const partialConfiguration: StyledPluginConfigurationInput = { validate: false }
 const editorConfiguration: StyledPluginEditorConfiguration = {
   extraTags: ['globalStyle'],
-  protocolVersion: EDITOR_CONFIGURATION_PROTOCOL_VERSION,
-  source: 'example-editor.css-templates',
 }
 const editorConfigurationEnvelope: StyledPluginEditorConfigurationEnvelope = {
   editorConfiguration,

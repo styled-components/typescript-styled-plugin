@@ -325,16 +325,12 @@ assertion that clearing or rejecting an overlay removes results. Public
 protocol type changes also run through `yarn test:package-api:consumers` so the
 minimum and current TypeScript declarations are checked.
 
-Run `yarn test:scaling --filter 'editor tag matching'` when changing overlay
-normalization, resource budgets, or listener storage. The check exercises the
-decorator's real matcher with the maximum additional-tag count, verifies linear
-growth, and fails if matching stops returning the expected result. Run
-`yarn benchmark` to report worst-position matching latency. Changes to shared
-weak-listener storage also need a focused project-lifecycle memory test; the
-diagnostics retained-heap guardrail does not create or close tsserver projects.
-The unit suite runs `test/unit/editor-configuration-lifecycle.probe.ts` with
-explicit garbage collection. It checks repeated manager and logger collection,
-finalization of dead listener registrations, and updates to a surviving service.
+When changing overlay normalization or shared weak-listener storage, run the
+configuration unit tests and `test/e2e/scenarios/plugin-lifecycle.test.ts`. The
+lifecycle scenario proves that an effective runtime change refreshes diagnostics
+for open files, a no-op does not refresh them, multiple projects keep separate
+bases, and project reloads retain the shared dynamic state while refreshing each
+project only once per effective change.
 
 CI builds the package with the Node.js version in `.github/.node-version`, then
 verifies the resulting artifact on Node 22.12 and that version against the

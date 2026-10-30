@@ -96,6 +96,8 @@ export class TSServer {
   private readonly notifications = new Set<number>()
   private readonly pending = new Map<number, PendingRequest>()
   private readonly process: ChildProcessWithoutNullStreams
+  private readonly projectsUpdatedInBackgroundEvents: server.protocol.ProjectsUpdatedInBackgroundEvent[] =
+    []
   private sequence = 0
   public readonly logFile: string
   public readonly project: FixtureProject
@@ -220,6 +222,10 @@ export class TSServer {
     }
   }
 
+  takeProjectsUpdatedInBackgroundEvents(): server.protocol.ProjectsUpdatedInBackgroundEvent[] {
+    return this.projectsUpdatedInBackgroundEvents.splice(0)
+  }
+
   /** Ends tsserver's input and waits for it to exit; rejects on any failure the session saw. */
   close(): Promise<void> {
     this.closePromise ??= this.shutDown()
@@ -288,6 +294,10 @@ export class TSServer {
       )
       return
     }
+    if (isProjectsUpdatedInBackgroundEvent(message)) {
+      this.projectsUpdatedInBackgroundEvents.push(message)
+      return
+    }
     if (isEvent(message)) {
       return
     }
@@ -344,10 +354,21 @@ export class TSServer {
   }
 }
 
-function isEvent(message: unknown): boolean {
+function isEvent(message: unknown): message is server.protocol.Event {
   return (
-    typeof message === 'object' && message !== null && 'type' in message && message.type === 'event'
+    typeof message === 'object' &&
+    message !== null &&
+    'type' in message &&
+    message.type === 'event' &&
+    'event' in message &&
+    typeof message.event === 'string'
   )
+}
+
+function isProjectsUpdatedInBackgroundEvent(
+  message: unknown,
+): message is server.protocol.ProjectsUpdatedInBackgroundEvent {
+  return isEvent(message) && message.event === 'projectsUpdatedInBackground'
 }
 
 function isResponse(message: unknown): message is server.protocol.Response {

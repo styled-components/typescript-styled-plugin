@@ -132,6 +132,112 @@ describe.concurrent('Plugin lifecycle', () => {
     assert.isFalse(extraAfterClear.success)
   })
 
+  it('should refresh diagnostics only for effective runtime configuration changes', async (context) => {
+    const server = startServer(context)
+    const source = mark('const extra = editorTag`⟨property⟩boarder⟨/property⟩: 1px solid black;`')
+    const file = server.open(source.text)
+    assert.deepEqual(
+      pluginDiagnostics(await server.request('semanticDiagnosticsSync', { file })),
+      [],
+    )
+    server.takeProjectsUpdatedInBackgroundEvents()
+
+    const transitions = [
+      {
+        config: editorEnvelope([]),
+        diagnostic: false,
+        name: 'initial empty overlay',
+        refresh: false,
+      },
+      {
+        config: editorEnvelope(['styled']),
+        diagnostic: false,
+        name: 'base tag only',
+        refresh: false,
+      },
+      {
+        config: editorEnvelope(['editorTag']),
+        diagnostic: true,
+        name: 'append tag',
+        refresh: true,
+      },
+      {
+        config: editorEnvelope([' editorTag ', 'editorTag']),
+        diagnostic: true,
+        name: 'equivalent overlay',
+        refresh: false,
+      },
+      {
+        config: { editorConfiguration: { extraTags: 'invalid' } },
+        diagnostic: true,
+        name: 'non-array overlay',
+        refresh: false,
+      },
+      {
+        config: { editorConfiguration: { extraTags: [1, null, ' '] } },
+        diagnostic: true,
+        name: 'all-invalid entries',
+        refresh: false,
+      },
+      {
+        config: editorEnvelope(['', '   ']),
+        diagnostic: true,
+        name: 'blank entries',
+        refresh: false,
+      },
+      {
+        config: { tags: ['editorTag'], validate: false },
+        diagnostic: false,
+        name: 'legacy disables validation',
+        refresh: true,
+      },
+      {
+        config: { tags: ['editorTag'], validate: 'false' },
+        diagnostic: false,
+        name: 'equivalent legacy',
+        refresh: false,
+      },
+      {
+        config: { tags: ['editorTag'], validate: true },
+        diagnostic: true,
+        name: 'legacy enables validation',
+        refresh: true,
+      },
+      {
+        config: editorEnvelope([]),
+        diagnostic: false,
+        name: 'empty overlay restores base',
+        refresh: true,
+      },
+      {
+        config: editorEnvelope(['editorTag']),
+        diagnostic: true,
+        name: 'append again',
+        refresh: true,
+      },
+      { config: editorEnvelope([]), diagnostic: false, name: 'clear overlay', refresh: true },
+      {
+        config: editorEnvelope([]),
+        diagnostic: false,
+        name: 'already empty overlay',
+        refresh: false,
+      },
+    ]
+    for (const { config, diagnostic, name, refresh } of transitions) {
+      await server.configurePlugin(config)
+      assert.deepEqual(
+        server.takeProjectsUpdatedInBackgroundEvents().flatMap(({ body }) => body.openFiles),
+        refresh ? [file] : [],
+        name,
+      )
+      assert.deepEqual(
+        spansAndText(pluginDiagnostics(await server.request('semanticDiagnosticsSync', { file }))),
+        diagnostic ? [{ ...source.range('property'), text: "Unknown property: 'boarder'" }] : [],
+        name,
+      )
+    }
+  })
+
   it('should keep the last valid overlay after a malformed editor envelope', async (context) => {
     const server = startServer(context, { project: 'editor-configuration-project-fixture' })
     const source = mark(
@@ -142,9 +248,7 @@ describe.concurrent('Plugin lifecycle', () => {
 
     await server.configurePlugin({
       editorConfiguration: {
-        extraTags: ['replacementTag'],
-        protocolVersion: 2,
-        source: 'vscode-styled-components',
+        extraTags: 'replacementTag',
       },
     })
     const base = await server.request('completions', { file, ...source.at('base') })
@@ -158,27 +262,7 @@ describe.concurrent('Plugin lifecycle', () => {
       bodyOf(extra).map(({ name }) => name),
       'aliceblue',
     )
-    assert.include(server.readLog(), 'unsupported protocolVersion type or value')
-  })
-
-  it('should accept an overlay from another host integration', async (context) => {
-    const server = startServer(context, { project: 'editor-configuration-project-fixture' })
-    const source = mark('const extra = editorTag`color:⟨extra⟩`')
-    const file = server.open(source.text)
-
-    await server.configurePlugin({
-      editorConfiguration: {
-        extraTags: ['editorTag'],
-        protocolVersion: 1,
-        source: 'example-lsp.css-templates',
-      },
-    })
-    const extra = await server.request('completions', { file, ...source.at('extra') })
-
-    assert.include(
-      bodyOf(extra).map(({ name }) => name),
-      'aliceblue',
-    )
+    assert.include(server.readLog(), 'extraTags must be an array')
   })
 
   it('should apply editor tags sent before project creation and restore the project base', async (context) => {
@@ -323,8 +407,14 @@ describe.concurrent('Plugin lifecycle', () => {
     )
 
     server.notify('reloadProjects', undefined)
+    await complete('extra')
+    server.takeProjectsUpdatedInBackgroundEvents()
     await server.configurePlugin({ tags: ['runtimeTag'], validate: false })
 
+    assert.deepEqual(
+      server.takeProjectsUpdatedInBackgroundEvents().flatMap(({ body }) => body.openFiles),
+      [file],
+    )
     assert.include(
       bodyOf(await complete('runtime')).map(({ name }) => name),
       'aliceblue',
@@ -334,6 +424,16 @@ describe.concurrent('Plugin lifecycle', () => {
     assert.deepEqual(
       pluginDiagnostics(await server.request('semanticDiagnosticsSync', { file })),
       [],
+    )
+
+    await server.configurePlugin(editorEnvelope(['editorTag']))
+    assert.deepEqual(
+      server.takeProjectsUpdatedInBackgroundEvents().flatMap(({ body }) => body.openFiles),
+      [file],
+    )
+    assert.include(
+      bodyOf(await complete('extra')).map(({ name }) => name),
+      'aliceblue',
     )
   })
 
@@ -621,8 +721,6 @@ function editorEnvelope(extraTags: ReadonlyArray<string>): unknown {
   return {
     editorConfiguration: {
       extraTags,
-      protocolVersion: 1,
-      source: 'vscode-styled-components',
     },
   }
 }

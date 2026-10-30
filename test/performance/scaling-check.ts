@@ -22,8 +22,7 @@
 import { isMainThread } from 'node:worker_threads'
 
 import type { TemplateContext } from 'typescript-template-language-service-decorator'
-import { isTagged } from 'typescript-template-language-service-decorator/lib/nodes.js'
-import * as ts from 'typescript/lib/tsserverlibrary.js'
+import type * as ts from 'typescript/lib/tsserverlibrary.js'
 
 import { formatSeconds, runBounded, serveBounded } from '../../scripts/bounded-worker.ts'
 import {
@@ -31,7 +30,6 @@ import {
   MAX_VALIDATION_CACHE_ENTRIES,
 } from '../../src/features/diagnostics.ts'
 import { getTemplateSubstitutions } from '../../src/template/template-substitutions.ts'
-import { MAX_EDITOR_TAG_COUNT } from '../../src/tsserver/editor-configuration.ts'
 import { replaceJavaScriptEscapes } from '../../src/virtual-document/javascript-escapes.ts'
 import {
   createProgressLocationTracker,
@@ -865,45 +863,7 @@ const manyTemplateContextsForSize = cachedBySize((size) =>
   ),
 )
 
-const maximumEditorTags = Array.from(
-  { length: MAX_EDITOR_TAG_COUNT },
-  (_, index) => `editorTag${index}`,
-)
-const maximumEditorTagExpression = (() => {
-  const sourceFile = ts.createSourceFile(
-    'editor-tag-scaling.ts',
-    `editorTag${MAX_EDITOR_TAG_COUNT - 1}\`color: red;\``,
-    ts.ScriptTarget.Latest,
-    true,
-  )
-  const statement = sourceFile.statements[0]
-  if (!statement || !ts.isExpressionStatement(statement)) {
-    throw new Error('Expected an expression statement for the editor tag scaling fixture.')
-  }
-  if (!ts.isTaggedTemplateExpression(statement.expression)) {
-    throw new Error('Expected a tagged template expression for the editor tag scaling fixture.')
-  }
-  return statement.expression
-})()
-
 const checks: readonly ScalingCheck[] = [
-  defineCheck({
-    n: 5_000,
-    name: 'editor tag matching (maximum additional tags)',
-    run(size) {
-      let matches = 0
-      for (let index = 0; index < size; index++) {
-        if (isTagged(maximumEditorTagExpression, maximumEditorTags)) {
-          matches++
-        }
-      }
-      return matches
-    },
-    verify: (matches, size) =>
-      matches === size
-        ? undefined
-        : { expected: `${size} matches`, received: `${matches} matches` },
-  }),
   ...substitutionCases.map(({ build, label }) =>
     defineTextCheck(`substitution (${label})`, build, ({ spans, text }) =>
       getTemplateSubstitutions(text, spans),

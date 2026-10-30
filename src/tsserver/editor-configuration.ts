@@ -3,19 +3,19 @@ import { isDeepStrictEqual } from 'node:util'
 import {
   type ConfigurationLogger,
   PluginConfigurationManager,
-  EDITOR_CONFIGURATION_PROTOCOL_VERSION,
   type StyledPluginConfiguration,
 } from '../configuration/plugin-configuration.ts'
 
-const MAX_EDITOR_CONFIGURATION_SOURCE_LENGTH = 128
-export const MAX_EDITOR_TAG_COUNT = 64
-export const MAX_EDITOR_TAG_LENGTH = 256
-export const MAX_EDITOR_TAG_TOTAL_LENGTH = 4_096
 const TSSERVER_PLUGIN_ENTRY_KEYS: ReadonlySet<string> = new Set(['global', 'name'])
 
+interface ProjectDiagnostics {
+  refreshDiagnostics(): void
+}
+
 interface EditorConfigurationListener {
-  applyEditorTags(extraTags: ReadonlyArray<string>): void
-  applyLegacyConfiguration(config: unknown): void
+  applyEditorTags(extraTags: ReadonlyArray<string>): boolean
+  applyLegacyConfiguration(config: unknown): boolean
+  readonly project?: ProjectDiagnostics
 }
 
 type EditorConfigurationParseResult =
@@ -27,40 +27,37 @@ type DynamicConfigurationState =
   | { readonly config: StyledPluginConfiguration; readonly kind: 'legacy' }
   | { readonly kind: 'none' }
 
+interface EditorConfigurationUpdateResult {
+  readonly changed: boolean
+  readonly matched: boolean
+}
+
 export class EditorConfigurationManager {
   private state: DynamicConfigurationState = { kind: 'none' }
-  private readonly listenerFinalizer = new FinalizationRegistry<
-    WeakRef<EditorConfigurationListener>
-  >((reference) => this.listeners.delete(reference))
   private readonly listeners = new Set<WeakRef<EditorConfigurationListener>>()
 
   public addListener(listener: EditorConfigurationListener): void {
-    this.forEachListener(() => {})
-    const reference = new WeakRef(listener)
-    this.listeners.add(reference)
-    this.listenerFinalizer.register(listener, reference, reference)
+    this.liveListeners()
+    this.listeners.add(new WeakRef(listener))
     this.applyState(listener)
   }
 
-  public deactivate(): void {
-    this.state = { kind: 'none' }
-  }
-
-  public activateLegacy(config: StyledPluginConfiguration, logger?: ConfigurationLogger): void {
+  public activateLegacy(config: StyledPluginConfiguration, logger?: ConfigurationLogger): boolean {
     if (this.state.kind === 'legacy' && isDeepStrictEqual(config, this.state.config)) {
-      return
+      return false
     }
     this.state = { config, kind: 'legacy' }
-    this.forEachListener((listener) => {
-      try {
-        listener.applyLegacyConfiguration(config)
-      } catch {
-        safelyLog(logger, 'Failed to apply legacy configuration to one project.')
-      }
-    })
+    return this.applyAndRefresh(
+      (listener) => listener.applyLegacyConfiguration(config),
+      logger,
+      'legacy configuration',
+    )
   }
 
-  public updateFromPluginConfig(config: unknown, logger?: ConfigurationLogger): boolean {
+  public updateFromPluginConfig(
+    config: unknown,
+    logger?: ConfigurationLogger,
+  ): EditorConfigurationUpdateResult {
     let matched: boolean
     try {
       matched =
@@ -70,10 +67,10 @@ export class EditorConfigurationManager {
         logger,
         'Could not inspect the plugin configuration safely; treating it as legacy configuration.',
       )
-      return false
+      return { changed: false, matched: false }
     }
     if (!matched) {
-      return false
+      return { changed: false, matched: false }
     }
 
     let parsed: EditorConfigurationParseResult
@@ -81,39 +78,68 @@ export class EditorConfigurationManager {
       parsed = parseEditorConfiguration(config, logger)
     } catch {
       safelyLog(logger, 'Ignored editor configuration that could not be read safely.')
-      return true
+      return { changed: false, matched: true }
     }
     if (
       !parsed.ok ||
       (this.state.kind === 'editor' && arraysEqual(parsed.extraTags, this.state.extraTags))
     ) {
-      return true
+      return { changed: false, matched: true }
     }
 
     this.state = { extraTags: parsed.extraTags, kind: 'editor' }
-    this.forEachListener((listener) => {
-      try {
-        listener.applyEditorTags(parsed.extraTags)
-      } catch {
-        safelyLog(logger, 'Failed to apply editor configuration to one project.')
-      }
-    })
-    safelyLog(
+    const changed = this.applyAndRefresh(
+      (listener) => listener.applyEditorTags(parsed.extraTags),
       logger,
-      `Applied editor configuration v1: ${parsed.extraTags.length} additional tags.`,
+      'editor configuration',
     )
+    safelyLog(logger, `Applied editor configuration: ${parsed.extraTags.length} additional tags.`)
+    return { changed, matched: true }
+  }
+
+  private applyAndRefresh(
+    apply: (listener: EditorConfigurationListener) => boolean,
+    logger: ConfigurationLogger | undefined,
+    configurationKind: string,
+  ): boolean {
+    const listeners = this.liveListeners()
+    let changed = false
+    for (const listener of listeners) {
+      try {
+        changed = apply(listener) || changed
+      } catch {
+        safelyLog(logger, `Failed to apply ${configurationKind} to one project.`)
+      }
+    }
+    if (!changed) {
+      return false
+    }
+    const refreshedProjects = new Set<ProjectDiagnostics>()
+    for (const { project } of listeners) {
+      if (!project || refreshedProjects.has(project)) {
+        continue
+      }
+      refreshedProjects.add(project)
+      try {
+        project.refreshDiagnostics()
+      } catch {
+        safelyLog(logger, 'Failed to refresh diagnostics for one project.')
+      }
+    }
     return true
   }
 
-  private forEachListener(callback: (listener: EditorConfigurationListener) => void): void {
+  private liveListeners(): EditorConfigurationListener[] {
+    const listeners: EditorConfigurationListener[] = []
     for (const reference of this.listeners) {
       const listener = reference.deref()
       if (listener) {
-        callback(listener)
+        listeners.push(listener)
       } else {
         this.listeners.delete(reference)
       }
     }
+    return listeners
   }
 
   private applyState(listener: EditorConfigurationListener): void {
@@ -137,7 +163,10 @@ export class ProjectConfigurationManager
   private projectConfiguration: StyledPluginConfiguration
   private readonly projectUpdateListeners = new Set<() => void>()
 
-  public constructor(editorConfiguration: EditorConfigurationManager) {
+  public constructor(
+    editorConfiguration: EditorConfigurationManager,
+    public readonly project?: ProjectDiagnostics,
+  ) {
     super()
     this.baseConfiguration = super.config
     this.effectiveConfiguration = super.config
@@ -153,14 +182,19 @@ export class ProjectConfigurationManager
     this.applyLegacyConfiguration(config, logger)
   }
 
-  public applyLegacyConfiguration(config: unknown, logger?: ConfigurationLogger): void {
+  public applyLegacyConfiguration(config: unknown, logger?: ConfigurationLogger): boolean {
+    const previous = this.effectiveConfiguration
     super.updateFromPluginConfig(config, logger)
     this.dynamicKind = 'legacy'
     this.legacyConfiguration = super.config
     this.baseConfiguration = super.config
     this.editorTags = []
     this.effectiveConfiguration = this.baseConfiguration
+    if (isDeepStrictEqual(previous, this.effectiveConfiguration)) {
+      return false
+    }
     this.notifyUpdated()
+    return true
   }
 
   public updateFromProjectConfig(config: unknown, logger?: ConfigurationLogger): void {
@@ -180,19 +214,20 @@ export class ProjectConfigurationManager
     this.projectUpdateListeners.add(listener)
   }
 
-  public applyEditorTags(extraTags: ReadonlyArray<string>): void {
-    const wasLegacyConfiguration = this.dynamicKind === 'legacy'
+  public applyEditorTags(extraTags: ReadonlyArray<string>): boolean {
+    const previous = this.effectiveConfiguration
     this.dynamicKind = 'editor'
     this.legacyConfiguration = undefined
     this.baseConfiguration = this.projectConfiguration
     const next = mergeEditorTags(this.baseConfiguration, extraTags)
     this.editorTags = extraTags
-    if (!wasLegacyConfiguration && arraysEqual(next.tags, this.effectiveConfiguration.tags)) {
-      return
+    if (isDeepStrictEqual(previous, next)) {
+      return false
     }
 
     this.effectiveConfiguration = next
     this.notifyUpdated()
+    return true
   }
 
   private notifyUpdated(): void {
@@ -230,42 +265,11 @@ function parseEditorConfiguration(
     return { ok: false }
   }
 
-  const fields = Object.keys(editorConfiguration).filter(
-    (name) => name !== 'extraTags' && name !== 'protocolVersion' && name !== 'source',
-  )
+  const fields = Object.keys(editorConfiguration).filter((name) => name !== 'extraTags')
   if (fields.length) {
     safelyLog(logger, `Ignored unknown editor configuration fields: ${formatList(fields)}.`)
   }
 
-  if (
-    !hasOwn(editorConfiguration, 'protocolVersion') ||
-    editorConfiguration.protocolVersion !== EDITOR_CONFIGURATION_PROTOCOL_VERSION
-  ) {
-    safelyLog(
-      logger,
-      `Ignored editor configuration with unsupported protocolVersion type or value; expected ${EDITOR_CONFIGURATION_PROTOCOL_VERSION}.`,
-    )
-    return { ok: false }
-  }
-  if (!hasOwn(editorConfiguration, 'source')) {
-    safelyLog(
-      logger,
-      `Ignored editor configuration source: it must be a non-empty string no longer than ${MAX_EDITOR_CONFIGURATION_SOURCE_LENGTH} UTF-16 code units.`,
-    )
-    return { ok: false }
-  }
-  const source = editorConfiguration.source
-  if (
-    typeof source !== 'string' ||
-    source.trim().length === 0 ||
-    source.length > MAX_EDITOR_CONFIGURATION_SOURCE_LENGTH
-  ) {
-    safelyLog(
-      logger,
-      `Ignored editor configuration source: it must be a non-empty string no longer than ${MAX_EDITOR_CONFIGURATION_SOURCE_LENGTH} UTF-16 code units.`,
-    )
-    return { ok: false }
-  }
   if (!hasOwn(editorConfiguration, 'extraTags')) {
     safelyLog(logger, 'Ignored editor configuration: extraTags must be an array.')
     return { ok: false }
@@ -280,31 +284,11 @@ function parseEditorConfiguration(
   const normalized: string[] = []
   const seen = new Set<string>()
   let rejectedCount = 0
-  let totalLength = 0
-  const tagCount: unknown = extraTags.length
-  if (
-    typeof tagCount !== 'number' ||
-    !Number.isInteger(tagCount) ||
-    tagCount < 0 ||
-    tagCount > MAX_EDITOR_TAG_COUNT
-  ) {
-    reportResourceLimits(logger)
-    return { ok: false }
-  }
-  for (let index = 0; index < tagCount; index++) {
+  for (let index = 0; index < extraTags.length; index++) {
     const value: unknown = extraTags[index]
     if (typeof value !== 'string') {
       rejectedCount++
       continue
-    }
-    if (value.length > MAX_EDITOR_TAG_LENGTH) {
-      reportResourceLimits(logger)
-      return { ok: false }
-    }
-    totalLength += value.length
-    if (totalLength > MAX_EDITOR_TAG_TOTAL_LENGTH) {
-      reportResourceLimits(logger)
-      return { ok: false }
     }
     const tag = value.trim()
     if (tag && !seen.has(tag)) {
@@ -317,6 +301,13 @@ function parseEditorConfiguration(
       logger,
       `Ignored ${rejectedCount} non-string ${rejectedCount === 1 ? 'entry' : 'entries'} in editorConfiguration.extraTags.`,
     )
+  }
+  if (extraTags.length > 0 && normalized.length === 0) {
+    safelyLog(
+      logger,
+      'Ignored editor configuration: a non-empty extraTags array must contain at least one non-empty string.',
+    )
+    return { ok: false }
   }
   return { extraTags: normalized, ok: true }
 }
@@ -345,13 +336,6 @@ function arraysEqual(left: ReadonlyArray<string>, right: ReadonlyArray<string>):
 
 function formatList(values: ReadonlyArray<string>): string {
   return new Intl.ListFormat('en', { style: 'long', type: 'conjunction' }).format(values)
-}
-
-function reportResourceLimits(logger: ConfigurationLogger | undefined): void {
-  safelyLog(
-    logger,
-    `Ignored editor configuration that exceeds resource limits: at most ${MAX_EDITOR_TAG_COUNT} tags, ${MAX_EDITOR_TAG_LENGTH} UTF-16 code units per tag, and ${MAX_EDITOR_TAG_TOTAL_LENGTH} UTF-16 code units total.`,
-  )
 }
 
 function hasOwn(record: object, key: string): boolean {
