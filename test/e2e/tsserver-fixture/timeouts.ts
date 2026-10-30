@@ -35,9 +35,11 @@ export function parsePositiveInteger(
   return parsed
 }
 
-export const responseTimeoutMs =
-  parsePositiveInteger(
-    responseTimeoutVariable,
-    process.env[responseTimeoutVariable],
-    MAX_RESPONSE_TIMEOUT_MS,
-  ) ?? DEFAULT_RESPONSE_TIMEOUT_MS
+export function getResponseTimeoutMs(value: string | undefined): number {
+  return (
+    parsePositiveInteger(responseTimeoutVariable, value, MAX_RESPONSE_TIMEOUT_MS) ??
+    DEFAULT_RESPONSE_TIMEOUT_MS
+  )
+}
+
+export const responseTimeoutMs = getResponseTimeoutMs(process.env[responseTimeoutVariable])
