@@ -69,11 +69,14 @@ A non-empty array that normalizes to no tags is invalid. Only an empty input
 array requests a clear. The adapter must retain this distinction before sending
 or persisting a payload, even if its settings UI validates the input.
 
-An extra tag is a text match, not a parsing mode or an import alias. Adding
-`globalStyle` enables CSS language features in that tagged template, but does
-not give it the global stylesheet parsing mode of built-in tags such as
-`createGlobalStyle`. Ordinary function calls and untagged templates do not
-become candidates. This protocol does not change syntax highlighting. See
+Extra tags are matched exactly like project tags. Parsing depends on the tag
+expression's name, not whether it was enabled through `tags` or `extraTags`.
+The built-in special names (`css`, `keyframes`, `createGlobalStyle`, `globalCss`,
+and `injectGlobal`) keep their parsing behavior when enabled through either
+setting. A custom name such as `globalStyle` gets ordinary component parsing,
+not global stylesheet parsing. Matching does not resolve import aliases.
+Ordinary function calls and untagged templates do not become candidates. This
+protocol does not change syntax highlighting. See
 [Tag matching](tsserver-host.md#tag-matching) for the matching rules.
 
 ## Configuration state
