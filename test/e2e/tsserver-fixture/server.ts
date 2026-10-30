@@ -23,6 +23,10 @@ const TSSERVER_HEAP_CAP_MB = 1024
 
 /** Requests the scenarios send, each paired with the response tsserver's protocol declares for it. */
 interface RequestTypes {
+  closeExternalProject: {
+    request: server.protocol.CloseExternalProjectRequest
+    response: server.protocol.CloseExternalProjectResponse
+  }
   completionEntryDetails: {
     request: server.protocol.CompletionDetailsRequest
     response: server.protocol.CompletionDetailsResponse
@@ -46,6 +50,10 @@ interface RequestTypes {
   getOutliningSpans: {
     request: server.protocol.OutliningSpansRequest
     response: server.protocol.OutliningSpansResponse
+  }
+  openExternalProject: {
+    request: server.protocol.OpenExternalProjectRequest
+    response: server.protocol.OpenExternalProjectResponse
   }
   quickinfo: {
     request: server.protocol.QuickInfoRequest

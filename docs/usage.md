@@ -305,8 +305,8 @@ current tsserver session; a host that persists configuration must not replace it
 stored last-valid payload with one that fails protocol validation.
 
 When a valid runtime configuration changes the effective settings, the plugin
-asks every live project to refresh diagnostics. Open files therefore update
-without waiting for the next edit.
+requests one diagnostic refresh per `ProjectService`, covering all its open
+files. Open files therefore update without waiting for the next edit.
 
 ## Emmet completions
 

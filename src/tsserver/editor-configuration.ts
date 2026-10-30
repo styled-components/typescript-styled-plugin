@@ -9,6 +9,7 @@ import {
 const TSSERVER_PLUGIN_ENTRY_KEYS: ReadonlySet<string> = new Set(['global', 'name'])
 
 interface ProjectDiagnostics {
+  close(): void
   refreshDiagnostics(): void
 }
 
@@ -34,11 +35,23 @@ interface EditorConfigurationUpdateResult {
 
 export class EditorConfigurationManager {
   private state: DynamicConfigurationState = { kind: 'none' }
-  private readonly listeners = new Set<WeakRef<EditorConfigurationListener>>()
+  private readonly listeners = new Set<EditorConfigurationListener>()
 
   public addListener(listener: EditorConfigurationListener): void {
-    this.liveListeners()
-    this.listeners.add(new WeakRef(listener))
+    const project = listener.project
+    if (project && !Array.from(this.listeners).some((entry) => entry.project === project)) {
+      const close = project.close
+      project.close = () => {
+        for (const entry of this.listeners) {
+          if (entry.project === project) {
+            this.listeners.delete(entry)
+          }
+        }
+        project.close = close
+        close.call(project)
+      }
+    }
+    this.listeners.add(listener)
     this.applyState(listener)
   }
 
@@ -58,28 +71,13 @@ export class EditorConfigurationManager {
     config: unknown,
     logger?: ConfigurationLogger,
   ): EditorConfigurationUpdateResult {
-    let matched: boolean
-    try {
-      matched =
-        config !== null && typeof config === 'object' && hasOwn(config, 'editorConfiguration')
-    } catch {
-      safelyLog(
-        logger,
-        'Could not inspect the plugin configuration safely; treating it as legacy configuration.',
-      )
-      return { changed: false, matched: false }
-    }
+    const matched =
+      config !== null && typeof config === 'object' && hasOwn(config, 'editorConfiguration')
     if (!matched) {
       return { changed: false, matched: false }
     }
 
-    let parsed: EditorConfigurationParseResult
-    try {
-      parsed = parseEditorConfiguration(config, logger)
-    } catch {
-      safelyLog(logger, 'Ignored editor configuration that could not be read safely.')
-      return { changed: false, matched: true }
-    }
+    const parsed = parseEditorConfiguration(config, logger)
     if (
       !parsed.ok ||
       (this.state.kind === 'editor' && arraysEqual(parsed.extraTags, this.state.extraTags))
@@ -93,7 +91,11 @@ export class EditorConfigurationManager {
       logger,
       'editor configuration',
     )
-    safelyLog(logger, `Applied editor configuration: ${parsed.extraTags.length} additional tags.`)
+    const tagCount = parsed.extraTags.length
+    safelyLog(
+      logger,
+      `Applied editor configuration: ${tagCount} additional ${tagCount === 1 ? 'tag' : 'tags'}.`,
+    )
     return { changed, matched: true }
   }
 
@@ -102,7 +104,7 @@ export class EditorConfigurationManager {
     logger: ConfigurationLogger | undefined,
     configurationKind: string,
   ): boolean {
-    const listeners = this.liveListeners()
+    const listeners = this.listeners
     let changed = false
     for (const listener of listeners) {
       try {
@@ -114,32 +116,13 @@ export class EditorConfigurationManager {
     if (!changed) {
       return false
     }
-    const refreshedProjects = new Set<ProjectDiagnostics>()
     for (const { project } of listeners) {
-      if (!project || refreshedProjects.has(project)) {
-        continue
-      }
-      refreshedProjects.add(project)
-      try {
+      if (project) {
         project.refreshDiagnostics()
-      } catch {
-        safelyLog(logger, 'Failed to refresh diagnostics for one project.')
+        break
       }
     }
     return true
-  }
-
-  private liveListeners(): EditorConfigurationListener[] {
-    const listeners: EditorConfigurationListener[] = []
-    for (const reference of this.listeners) {
-      const listener = reference.deref()
-      if (listener) {
-        listeners.push(listener)
-      } else {
-        this.listeners.delete(reference)
-      }
-    }
-    return listeners
   }
 
   private applyState(listener: EditorConfigurationListener): void {

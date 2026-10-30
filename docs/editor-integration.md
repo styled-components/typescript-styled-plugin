@@ -117,8 +117,8 @@ own bases. Project reloads do not require the adapter to reconstruct project
 settings or merge them into the envelope.
 
 When effective settings change, the plugin updates all live managers and calls
-`refreshDiagnostics()` once per live project. A refresh failure in one project
-does not stop the others. Hosts must handle the resulting
+`refreshDiagnostics()` on one live project per `ProjectService`. That call
+covers all open files in the service. Hosts must handle the resulting
 `projectsUpdatedInBackground` event and request updated diagnostics for open
 files. Invalid payloads and updates that leave effective settings unchanged do
 not clear caches or request diagnostic refreshes. The event is a refresh

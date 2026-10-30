@@ -13,15 +13,9 @@ import { EditorConfigurationManager, ProjectConfigurationManager } from './edito
 import { pluginPackageName } from './plugin-identity.ts'
 import { TsServerLogger } from './tsserver-logger.ts'
 
-interface ProjectConfigurationRegistration {
-  readonly logger: WeakRef<TsServerLogger>
-  readonly manager: WeakRef<ProjectConfigurationManager>
-}
-
 export class TsServerStyledPlugin {
   private editorConfiguration?: EditorConfigurationManager
   private logger?: TsServerLogger
-  private readonly projectConfigurations = new Set<ProjectConfigurationRegistration>()
 
   public constructor(
     private readonly typescript: typeof ts,
@@ -37,19 +31,13 @@ export class TsServerStyledPlugin {
     this.editorConfiguration = editorConfiguration
     const editorUpdate = editorConfiguration.updateFromPluginConfig(info.config, logger)
     const configurationManager = new ProjectConfigurationManager(editorConfiguration, info.project)
-    const { configuration: projectConfiguration, readSuccessfully } =
-      readProjectPluginConfiguration(info, logger)
+    const projectConfiguration = readProjectPluginConfiguration(info)
     configurationManager.updateFromProjectConfig(projectConfiguration, logger)
-    if (
-      !editorUpdate.matched &&
-      readSuccessfully &&
-      isLegacyConfigurationOverride(info.config, projectConfiguration)
-    ) {
+    if (!editorUpdate.matched && isLegacyConfigurationOverride(info.config, projectConfiguration)) {
       const legacyConfiguration = new PluginConfigurationManager()
       legacyConfiguration.updateFromPluginConfig(info.config, logger)
       editorConfiguration.activateLegacy(legacyConfiguration.config, logger)
     }
-    this.registerProjectConfiguration(configurationManager, logger)
     this.logConfigurationSummary(configurationManager, logger)
 
     if (!isSupportedTypeScriptVersion(this.typescript)) {
@@ -93,23 +81,6 @@ export class TsServerStyledPlugin {
       legacyConfiguration.updateFromPluginConfig(config, logger)
       this.editorConfiguration?.activateLegacy(legacyConfiguration.config, logger)
     }
-    this.forEachProjectConfiguration((manager, projectLogger) => {
-      this.logConfigurationSummary(manager, projectLogger)
-    })
-  }
-
-  private forEachProjectConfiguration(
-    callback: (manager: ProjectConfigurationManager, logger: TsServerLogger) => void,
-  ): void {
-    for (const registration of this.projectConfigurations) {
-      const logger = registration.logger.deref()
-      const manager = registration.manager.deref()
-      if (logger && manager) {
-        callback(manager, logger)
-      } else {
-        this.projectConfigurations.delete(registration)
-      }
-    }
   }
 
   private logConfigurationSummary(
@@ -125,37 +96,11 @@ export class TsServerStyledPlugin {
         }),
     )
   }
-
-  private registerProjectConfiguration(
-    manager: ProjectConfigurationManager,
-    logger: TsServerLogger,
-  ): void {
-    this.forEachProjectConfiguration(() => {})
-    this.projectConfigurations.add({ logger: new WeakRef(logger), manager: new WeakRef(manager) })
-  }
 }
 
-interface ProjectPluginConfigurationReadResult {
-  readonly configuration: unknown
-  readonly readSuccessfully: boolean
-}
-
-function readProjectPluginConfiguration(
-  info: ts.server.PluginCreateInfo,
-  logger: TsServerLogger,
-): ProjectPluginConfigurationReadResult {
-  try {
-    const plugins = info.project.getCompilerOptions().plugins
-    return {
-      configuration: Array.isArray(plugins) ? plugins.find(isStyledPluginConfiguration) : undefined,
-      readSuccessfully: true,
-    }
-  } catch {
-    logger.log(
-      "Could not read the project's compiler options while restoring plugin configuration; using plugin defaults. Check the tsserver host's project implementation.",
-    )
-    return { configuration: undefined, readSuccessfully: false }
-  }
+function readProjectPluginConfiguration(info: ts.server.PluginCreateInfo): unknown {
+  const plugins = info.project.getCompilerOptions().plugins
+  return Array.isArray(plugins) ? plugins.find(isStyledPluginConfiguration) : undefined
 }
 
 function isStyledPluginConfiguration(value: unknown): value is ts.PluginImport {
@@ -178,19 +123,15 @@ function isLegacyConfigurationOverride(config: unknown, projectConfiguration: un
     project.updateFromPluginConfig(projectConfiguration)
     return !isDeepStrictEqual(runtime.config, project.config)
   }
-  try {
-    if (typeof config !== 'object' || config === null || Array.isArray(config)) {
-      return true
-    }
-    const keys = Object.keys(config)
-    return !(
-      keys.every((name) => name === 'global' || name === 'name') &&
-      'global' in config &&
-      config.global === true
-    )
-  } catch {
+  if (typeof config !== 'object' || config === null || Array.isArray(config)) {
     return true
   }
+  const keys = Object.keys(config)
+  return !(
+    keys.every((name) => name === 'global' || name === 'name') &&
+    'global' in config &&
+    config.global === true
+  )
 }
 
 /** The floor and the reason for it: docs/tsserver-host.md, "TypeScript versions". */
