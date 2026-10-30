@@ -199,6 +199,116 @@ describe('PluginConfigurationManager', () => {
     ])
   })
 
+  it('should copy tag arrays before notifying listeners', () => {
+    const manager = new PluginConfigurationManager()
+    const tags = ['styled']
+    manager.onUpdatedConfig(() => tags.push('later'))
+
+    manager.updateFromPluginConfig({ tags })
+
+    assert.deepEqual(manager.config.tags, ['styled'])
+    assert.deepEqual(tags, ['styled', 'later'])
+  })
+
+  it('should make a one-level copy of lint and Emmet configuration', () => {
+    const manager = new PluginConfigurationManager()
+    const preferences = { compact: true }
+    const validProperties = ['brand-tone']
+    const emmet = { preferences, showExpandedAbbreviation: 'never' }
+    const lint = { unknownProperties: 'ignore', validProperties }
+
+    manager.updateFromPluginConfig({ emmet, lint })
+    emmet.showExpandedAbbreviation = 'always'
+    lint.unknownProperties = 'error'
+    validProperties.push('later')
+
+    assert.deepEqual(manager.config.emmet, { preferences, showExpandedAbbreviation: 'never' })
+    assert.strictEqual(manager.config.emmet.preferences, preferences)
+    assert.deepEqual(manager.config.lint, {
+      emptyRules: 'ignore',
+      unknownProperties: 'ignore',
+      validProperties: ['brand-tone'],
+    })
+  })
+
+  it('should preserve __proto__ as an own lint key without changing the prototype', () => {
+    const manager = new PluginConfigurationManager()
+    const logger = createLogger()
+    const lint = JSON.parse('{"__proto__":{"unknownProperties":"ignore"},"zeroUnits":"error"}')
+
+    manager.updateFromPluginConfig({ lint }, logger)
+
+    assert.deepEqual(manager.config.lint, {
+      ['__proto__']: { unknownProperties: 'ignore' },
+      emptyRules: 'ignore',
+      zeroUnits: 'error',
+    })
+    assert.strictEqual(Object.getPrototypeOf(manager.config.lint), Object.prototype)
+    assert.deepEqual(logger.messages, [])
+  })
+
+  it.each(['tags', 'lint.validProperties'])(
+    'should reject an array with an invalid length for %s',
+    (setting) => {
+      const manager = new PluginConfigurationManager()
+      const logger = createLogger()
+      const values = new Proxy(['styled'], {
+        get(target, key, receiver) {
+          if (key === Symbol.iterator) {
+            return target[Symbol.iterator].bind(target)
+          }
+          return key === 'length' ? '1' : Reflect.get(target, key, receiver)
+        },
+      })
+
+      manager.updateFromPluginConfig(
+        setting === 'tags'
+          ? { tags: values, validate: false }
+          : { lint: { validProperties: values }, validate: false },
+        logger,
+      )
+
+      assert.isTrue(manager.config.tags === new PluginConfigurationManager().config.tags)
+      assert.deepEqual(manager.config.lint, { emptyRules: 'ignore' })
+      assert.isFalse(manager.config.validate)
+      assert.deepEqual(logger.messages, [
+        `Ignored the plugin setting ${setting}: it accepts ${setting === 'tags' ? 'a list of tag names, such as ["styled", "css"]' : 'a list of property names, such as ["margin-vertical"]'}; received ["styled"]. The default applies.`,
+      ])
+    },
+  )
+
+  it.each(['getter', 'revoked proxy'])(
+    'should reset to defaults and notify once when configuration contains a throwing %s',
+    (kind) => {
+      const manager = new PluginConfigurationManager()
+      const logger = createLogger()
+      manager.updateFromPluginConfig({ tags: ['previous'], validate: false })
+      let notifications = 0
+      manager.onUpdatedConfig(() => notifications++)
+      const revoked = Proxy.revocable({}, {})
+      revoked.revoke()
+      const config =
+        kind === 'getter'
+          ? {
+              get tags() {
+                throw new Error('tags could not be read')
+              },
+            }
+          : revoked.proxy
+
+      assert.doesNotThrow(() => manager.updateFromPluginConfig(config, logger))
+
+      assert.deepEqual(manager.config, new PluginConfigurationManager().config)
+      assert.strictEqual(notifications, 1)
+      assert.deepEqual(logger.messages, [
+        'Ignored the plugin configuration because it could not be read safely. The defaults apply.',
+      ])
+      manager.updateFromPluginConfig({ tags: ['next'] })
+      assert.deepEqual(manager.config.tags, ['next'])
+      assert.strictEqual(notifications, 2)
+    },
+  )
+
   it('should log a top-level configuration that is not an object', () => {
     const manager = new PluginConfigurationManager()
     const logger = createLogger()
