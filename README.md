@@ -69,6 +69,10 @@ The plugin can be loaded in two ways:
 
 The available loading modes depend on the editor integration below.
 
+Adapter authors can use the [editor integration protocol](docs/editor-integration.md)
+to append tag names at runtime while preserving project settings. The guide
+covers payload validation, configuration replay, and packaged-adapter checks.
+
 ### With VS Code
 
 **Loading mode: editor-global, with a project-local alternative.**

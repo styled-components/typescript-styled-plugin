@@ -274,7 +274,11 @@ list removes the additions. The overlay does not change `validate`, `lint`, or
 
 This envelope is a general integration protocol for editor extensions, language
 server adapters, and other tsserver hosts, not a setting to copy into
-`tsconfig.json`. One complete overlay is kept per tsserver project service, so a
+`tsconfig.json`. Adapter authors should follow the
+[editor integration protocol](editor-integration.md) for version requirements,
+payload construction, and configuration replay.
+
+One complete overlay is kept per tsserver project service, so a
 later valid envelope replaces the previous one. A host with multiple senders
 must coordinate them before sending.
 

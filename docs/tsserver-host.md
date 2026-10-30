@@ -47,6 +47,12 @@ The decorator matches a tagged template by the tag's source text. A configured n
 
 - `styled-components/vscode-styled-components` bundles this package and registers it through `contributes.typescriptServerPlugins` with `enableForWorkspaceTypeScriptVersions: true`. The extension depends on `^1.0.0`; a new major reaches extension users only after the extension updates that range.
 
+### VS Code configuration transport (2026-10-30)
+
+- Verified against VS Code's source: [`ApiV0.configurePlugin`](https://github.com/microsoft/vscode/blob/main/extensions/typescript-language-features/src/api.ts) stores configuration through `PluginManager` and returns `void`. `getAPI(0)` exposes this API; it does not report the loaded plugin path, version, or whether the plugin accepted the payload.
+- [`PluginManager`](https://github.com/microsoft/vscode/blob/main/extensions/typescript-language-features/src/tsServer/plugins.ts) holds the latest configuration per plugin ID in an in-memory map and emits an update event. API v0 has no operation to remove that saved entry. A new Extension Host starts with a new map.
+- [`TypeScriptServiceClient`](https://github.com/microsoft/vscode/blob/main/extensions/typescript-language-features/src/typescriptServiceClient.ts) forwards configuration updates and replays the map in `serviceStarted`. It handles `projectsUpdatedInBackground` by requesting diagnostics for the listed open files. Adapter responsibilities are defined in the [editor integration protocol](editor-integration.md#vs-code-adapters).
+
 ## Driving tsserver in tests
 
 - Open the probe file without `projectFileName` and keep its `tsconfig.json` in the same directory: passing `projectFileName` makes tsserver build an inferred project that ignores the config.
