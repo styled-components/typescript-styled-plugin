@@ -1,10 +1,13 @@
 # Editor integration protocol
 
-This contract is for editor extension authors, language server adapters, and
-other hosts that load `@styled/typescript-styled-plugin` through tsserver. It
-defines how to add tagged-template names without replacing a project's plugin
-settings. End-user setup belongs in the [usage guide](usage.md); plugin internals
-belong in [Architecture](architecture.md#configuration).
+This contract is for third-party editor extension authors, language server
+adapters, and other hosts that load `@styled/typescript-styled-plugin` through
+tsserver. It defines how to add tagged-template names without replacing a
+project's plugin settings. The payload and configuration rules are independent
+of the editor; each adapter supplies its host's transport and lifecycle handling.
+Host-specific sections apply only to the named host. End-user setup belongs in
+the [usage guide](usage.md); plugin internals belong in
+[Architecture](architecture.md#configuration).
 
 ## Availability
 
@@ -203,6 +206,10 @@ avoid logging source text, tag contents, or complete workspace settings.
 
 ## VS Code adapters
 
+This section describes one host integration. Other editors and language server
+adapters use the same protocol through their own tsserver configuration transport;
+they do not need VS Code's extension API, settings schema, or packaging format.
+
 The built-in `vscode.typescript-language-features` extension exposes API v0
 with `configurePlugin(pluginId, configuration)`. Obtain it through
 `getAPI(0)` after activation. Pass the npm plugin name, not the adapter's
@@ -258,8 +265,8 @@ An adapter's tests should cover these observable results:
 - Missing host APIs, send failures, and plugin-loading conflicts leave the
   adapter's other features available.
 - The final packaged adapter loads the expected plugin under every supported
-  host version, including VS Code's bundled and workspace TypeScript paths
-  where the adapter supports them.
+  host version and TypeScript loading mode, including host-bundled and
+  workspace installations where the adapter supports them.
 
 Pair negative assertions with a positive control in the same session: an
 unloaded plugin also returns no CSS diagnostics or completions. The plugin's
