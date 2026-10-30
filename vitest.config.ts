@@ -2,7 +2,7 @@ import { availableParallelism } from 'node:os'
 
 import { defineConfig } from 'vitest/config'
 
-import { responseTimeoutMs } from './test/e2e/tsserver-fixture/timeouts'
+import { E2E_TIMEOUT_HEADROOM_MS, responseTimeoutMs } from './test/e2e/tsserver-fixture/timeouts'
 
 /**
  * Two projects, so only e2e files run the e2e globalSetup: Vitest assigns each test file to a
@@ -17,6 +17,26 @@ import { responseTimeoutMs } from './test/e2e/tsserver-fixture/timeouts'
  */
 const e2eParallelism = Math.max(1, Math.min(8, availableParallelism() - 1))
 
+/** Keeps cleanup from preempting the harness's own process-exit timeout. */
+export const e2eTimeoutMs = responseTimeoutMs + E2E_TIMEOUT_HEADROOM_MS
+
+export const e2eTestConfig = {
+  environment: 'node',
+  globals: true,
+  globalSetup: [
+    'test/e2e/tsserver-fixture/check-plugin-link.ts',
+    'test/e2e/tsserver-fixture/clear-logs.ts',
+  ],
+  hookTimeout: e2eTimeoutMs,
+  include: ['test/e2e/scenarios/**/*.test.ts'],
+  maxConcurrency: e2eParallelism,
+  maxWorkers: e2eParallelism,
+  name: 'e2e',
+  testTimeout: e2eTimeoutMs,
+}
+
+export const e2eProjectConfig = { test: e2eTestConfig }
+
 /**
  * Unit tests run plugin code inside each test worker, a child process in Vitest's default `forks`
  * pool. The heap cap ends a worker whose test retains without bound within seconds, as a failed
@@ -28,7 +48,7 @@ const e2eParallelism = Math.max(1, Math.min(8, availableParallelism() - 1))
  */
 const UNIT_WORKER_HEAP_CAP_MB = 1024
 
-export default defineConfig({
+export const vitestConfig = defineConfig({
   test: {
     projects: [
       {
@@ -40,22 +60,9 @@ export default defineConfig({
           name: 'unit',
         },
       },
-      {
-        test: {
-          environment: 'node',
-          globals: true,
-          globalSetup: [
-            'test/e2e/tsserver-fixture/check-plugin-link.ts',
-            'test/e2e/tsserver-fixture/clear-logs.ts',
-          ],
-          include: ['test/e2e/scenarios/**/*.test.ts'],
-          maxConcurrency: e2eParallelism,
-          maxWorkers: e2eParallelism,
-          name: 'e2e',
-          /** Above the harness's own response timeout, so its message naming the request wins. */
-          testTimeout: responseTimeoutMs + 15_000,
-        },
-      },
+      e2eProjectConfig,
     ],
   },
 })
+
+export default vitestConfig
