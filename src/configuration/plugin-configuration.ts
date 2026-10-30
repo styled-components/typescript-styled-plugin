@@ -95,31 +95,40 @@ export class PluginConfigurationManager {
   public updateFromPluginConfig(config: unknown, logger?: ConfigurationLogger) {
     const reporter = createReporter(logger)
     const defaults = PluginConfigurationManager.defaultConfiguration
-    let settings: Readonly<Record<string, unknown>> = {}
-    if (isRecord(config)) {
-      settings = config
-    } else if (config !== undefined && config !== null) {
+    try {
+      let settings: Readonly<Record<string, unknown>> = {}
+      if (isRecord(config)) {
+        settings = config
+      } else if (config !== undefined && config !== null) {
+        reporter.report(
+          `Ignored the plugin configuration: it accepts an object of plugin settings; received ${describeValue(config)}. The defaults apply.`,
+        )
+      }
+
+      this.configuration = {
+        emmet:
+          cloneConfigurationRecord(
+            normalizeRecord(settings.emmet, 'emmet', 'an object of Emmet options', reporter),
+          ) ?? defaults.emmet,
+        lint:
+          cloneConfigurationRecord({
+            ...defaults.lint,
+            ...normalizeLint(
+              normalizeRecord(settings.lint, 'lint', 'an object of lint settings', reporter),
+              defaults.lint,
+              reporter,
+            ),
+          }) ?? defaults.lint,
+        tags: normalizeTags(settings.tags, reporter) ?? defaults.tags,
+        validate: normalizeBoolean(settings.validate, 'validate', reporter) ?? defaults.validate,
+      }
+      reportUnknownSettings(settings, reporter)
+    } catch {
+      this.configuration = defaults
       reporter.report(
-        `Ignored the plugin configuration: it accepts an object of plugin settings; received ${describeValue(config)}. The defaults apply.`,
+        'Ignored the plugin configuration because it could not be read safely. The defaults apply.',
       )
     }
-
-    this.configuration = {
-      emmet:
-        normalizeRecord(settings.emmet, 'emmet', 'an object of Emmet options', reporter) ??
-        defaults.emmet,
-      lint: {
-        ...defaults.lint,
-        ...normalizeLint(
-          normalizeRecord(settings.lint, 'lint', 'an object of lint settings', reporter),
-          defaults.lint,
-          reporter,
-        ),
-      },
-      tags: normalizeTags(settings.tags, reporter) ?? defaults.tags,
-      validate: normalizeBoolean(settings.validate, 'validate', reporter) ?? defaults.validate,
-    }
-    reportUnknownSettings(settings, reporter)
 
     for (const listener of this.updateListeners) {
       listener()
@@ -274,7 +283,12 @@ function normalizeLint(
       continue
     }
     if (!hasOwn(LINT_LEVEL_SETTINGS, name)) {
-      normalized[name] = value
+      Object.defineProperty(normalized, name, {
+        configurable: true,
+        enumerable: true,
+        value,
+        writable: true,
+      })
       continue
     }
     const level = typeof value === 'string' ? toLintLevel(value) : undefined
@@ -318,7 +332,17 @@ function normalizeValidProperties(
   }
   const names: string[] = []
   const rejected: unknown[] = []
-  for (const item of value) {
+  const itemCount = getArrayLength(value)
+  if (itemCount === undefined) {
+    reporter.reportRejected(
+      `lint.${VALID_PROPERTIES_SETTING}`,
+      'a list of property names, such as ["margin-vertical"]',
+      value,
+    )
+    return undefined
+  }
+  for (let index = 0; index < itemCount; index++) {
+    const item: unknown = value[index]
     if (typeof item === 'string') {
       names.push(item)
     } else {
@@ -337,13 +361,38 @@ function normalizeTags(value: unknown, reporter: Reporter): ReadonlyArray<string
   if (typeof value === 'string') {
     return [value]
   }
-  if (Array.isArray(value) && value.every((item): item is string => typeof item === 'string')) {
-    return value
+  if (Array.isArray(value)) {
+    const tagCount = getArrayLength(value)
+    if (tagCount !== undefined) {
+      const tags: string[] = []
+      for (let index = 0; index < tagCount; index++) {
+        const item: unknown = value[index]
+        if (typeof item !== 'string') {
+          reporter.reportRejected('tags', 'a list of tag names, such as ["styled", "css"]', value)
+          return undefined
+        }
+        tags.push(item)
+      }
+      return tags
+    }
   }
   if (value !== undefined) {
     reporter.reportRejected('tags', 'a list of tag names, such as ["styled", "css"]', value)
   }
   return undefined
+}
+
+function getArrayLength(value: ReadonlyArray<unknown>): number | undefined {
+  const length: unknown = value.length
+  return typeof length === 'number' && Number.isSafeInteger(length) && length >= 0
+    ? length
+    : undefined
+}
+
+function cloneConfigurationRecord(
+  value: Readonly<Record<string, unknown>> | undefined,
+): Record<string, unknown> | undefined {
+  return value === undefined ? undefined : Object.fromEntries(Object.entries(value))
 }
 
 function normalizeBoolean(value: unknown, name: string, reporter: Reporter): boolean | undefined {
