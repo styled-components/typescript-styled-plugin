@@ -61,6 +61,7 @@ interface RequestTypes {
 interface NotificationTypes {
   change: server.protocol.ChangeRequest
   open: server.protocol.OpenRequest
+  reloadProjects: server.protocol.ReloadProjectsRequest
 }
 
 export type RequestCommand = keyof RequestTypes
@@ -70,6 +71,7 @@ export type ResponseTo<Command extends RequestCommand> = RequestTypes[Command]['
 type NotificationCommand = keyof NotificationTypes
 
 export interface TSServerOptions {
+  globalPlugins?: boolean
   project?: FixtureProject
   /** An alias from test/e2e/package.json; defaults to `TSSERVER_TYPESCRIPT_PACKAGE`, then `typescript`. */
   typescriptPackage?: string
@@ -98,7 +100,11 @@ export class TSServer {
   public readonly logFile: string
   public readonly project: FixtureProject
 
-  constructor({ project = 'styled-project-fixture', typescriptPackage }: TSServerOptions = {}) {
+  constructor({
+    globalPlugins = false,
+    project = 'styled-project-fixture',
+    typescriptPackage,
+  }: TSServerOptions = {}) {
     this.project = project
     const runId = process.env.TSSERVER_FIXTURE_RUN_ID
     if (runId === undefined) {
@@ -123,6 +129,7 @@ export class TSServer {
         this.logFile,
         '--pluginProbeLocations',
         e2eRoot,
+        ...(globalPlugins ? ['--globalPlugins', pluginPackageName] : []),
       ],
       { cwd: path.join(e2eRoot, project), stdio: 'pipe' },
     )

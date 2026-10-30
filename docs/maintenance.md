@@ -332,6 +332,9 @@ growth, and fails if matching stops returning the expected result. Run
 `yarn benchmark` to report worst-position matching latency. Changes to shared
 weak-listener storage also need a focused project-lifecycle memory test; the
 diagnostics retained-heap guardrail does not create or close tsserver projects.
+The unit suite runs `test/unit/editor-configuration-lifecycle.probe.ts` with
+explicit garbage collection. It checks repeated manager and logger collection,
+finalization of dead listener registrations, and updates to a surviving service.
 
 CI builds the package with the Node.js version in `.github/.node-version`, then
 verifies the resulting artifact on Node 22.12 and that version against the

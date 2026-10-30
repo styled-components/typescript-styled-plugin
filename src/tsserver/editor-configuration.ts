@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from 'node:util'
+
 import {
   type ConfigurationLogger,
   PluginConfigurationManager,
@@ -44,8 +46,18 @@ export class EditorConfigurationManager {
     this.state = { kind: 'none' }
   }
 
-  public activateLegacy(config: StyledPluginConfiguration): void {
+  public activateLegacy(config: StyledPluginConfiguration, logger?: ConfigurationLogger): void {
+    if (this.state.kind === 'legacy' && isDeepStrictEqual(config, this.state.config)) {
+      return
+    }
     this.state = { config, kind: 'legacy' }
+    this.forEachListener((listener) => {
+      try {
+        listener.applyLegacyConfiguration(config)
+      } catch {
+        safelyLog(logger, 'Failed to apply legacy configuration to one project.')
+      }
+    })
   }
 
   public updateFromPluginConfig(config: unknown, logger?: ConfigurationLogger): boolean {
@@ -169,13 +181,13 @@ export class ProjectConfigurationManager
   }
 
   public applyEditorTags(extraTags: ReadonlyArray<string>): void {
-    const wasEditorConfiguration = this.dynamicKind === 'editor'
+    const wasLegacyConfiguration = this.dynamicKind === 'legacy'
     this.dynamicKind = 'editor'
     this.legacyConfiguration = undefined
     this.baseConfiguration = this.projectConfiguration
     const next = mergeEditorTags(this.baseConfiguration, extraTags)
     this.editorTags = extraTags
-    if (wasEditorConfiguration && arraysEqual(next.tags, this.effectiveConfiguration.tags)) {
+    if (!wasLegacyConfiguration && arraysEqual(next.tags, this.effectiveConfiguration.tags)) {
       return
     }
 
