@@ -8,9 +8,13 @@ on:
     branches:
       - main
   workflow_dispatch:
+  workflow_call:
 
+# In a reusable workflow, github.workflow is the caller's name.
+# Keep the ci- prefix so this group differs from Release's group;
+# otherwise cancel-in-progress would cancel the calling Release workflow.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:

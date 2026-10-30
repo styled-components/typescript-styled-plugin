@@ -416,8 +416,10 @@ This lists the git authors and co-authors behind every pending changeset, so a
 thank-you is derived from history rather than recalled from memory.
 
 Release automation lives in `.github/workflows/release.yml`. On every push to
-`main`, a `verify` job runs `yarn verify` once; the `release` and `prerelease`
-jobs both wait on it (`needs: verify`) before doing anything else. The
+`main`, its `verify` job calls `.github/workflows/ci.yml` as a reusable workflow,
+including the TypeScript E2E matrix, Node-floor smoke, and unsupported-TypeScript
+smoke. The `release` and `prerelease` jobs both wait on the entire workflow
+(`needs: verify`) before doing anything else. The
 `release` job either opens or updates a "Version Packages" pull request (one
 `changeset version` behind pending changesets) or, once that pull request is
 merged, builds and publishes the package. A failing `verify` stops both jobs
