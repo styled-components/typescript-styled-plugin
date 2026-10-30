@@ -288,11 +288,12 @@ the previous dynamic state; it does not clear an existing overlay. Only
 `extraTags: []` explicitly clears the overlay. There is no protocol count or
 length limit.
 
-An extra tag is only another text string for tagged-template matching. For
-example, adding `globalStyle` makes `` globalStyle`...` `` eligible for CSS
-language features, but does not give it the global stylesheet parsing mode used
-by built-in tags such as `createGlobalStyle`, `globalCss`, and `injectGlobal`.
-Tag matching does not inspect imports or change syntax highlighting.
+Extra tags use the same matching and parsing rules as project tags. Built-in
+special names such as `css`, `keyframes`, `createGlobalStyle`, `globalCss`, and
+`injectGlobal` retain their parsing behavior when enabled through `extraTags`.
+A custom name such as `globalStyle` enables CSS language features with ordinary
+component parsing, not global stylesheet parsing. Tag matching does not inspect
+imports or change syntax highlighting.
 
 Legacy runtime replacement and the editor overlay are mutually exclusive. A
 normal `configurePlugin` payload deactivates the overlay. A later valid editor
