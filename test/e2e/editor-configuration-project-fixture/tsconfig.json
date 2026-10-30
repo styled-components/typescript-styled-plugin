@@ -4,6 +4,8 @@
     "noEmit": true,
     "plugins": [
       {
+        "emmet": { "showExpandedAbbreviation": "never" },
+        "lint": { "unknownProperties": "ignore" },
         "name": "@styled/typescript-styled-plugin",
         "tags": ["projectTag"],
         "validate": false

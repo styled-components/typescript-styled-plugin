@@ -295,7 +295,12 @@ function normalizeLint(
       continue
     }
     if (!hasOwn(LINT_LEVEL_SETTINGS, name)) {
-      normalized[name] = value
+      Object.defineProperty(normalized, name, {
+        configurable: true,
+        enumerable: true,
+        value,
+        writable: true,
+      })
       continue
     }
     const level = typeof value === 'string' ? toLintLevel(value) : undefined
@@ -431,7 +436,12 @@ function cloneConfigurationValue(value: unknown, seen: WeakMap<object, unknown>)
   const clone: Record<string, unknown> = {}
   seen.set(value, clone)
   for (const [name, item] of Object.entries(value)) {
-    clone[name] = cloneConfigurationValue(item, seen)
+    Object.defineProperty(clone, name, {
+      configurable: true,
+      enumerable: true,
+      value: cloneConfigurationValue(item, seen),
+      writable: true,
+    })
   }
   return clone
 }

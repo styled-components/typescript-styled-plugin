@@ -235,6 +235,28 @@ describe('PluginConfigurationManager', () => {
     assert.strictEqual(manager.config.emmet.self, manager.config.emmet)
   })
 
+  it.each(['emmet', 'lint'] as const)(
+    'should preserve own __proto__ fields in %s without changing snapshot prototypes',
+    (setting) => {
+      const manager = new PluginConfigurationManager()
+      const record: Record<string, unknown> = JSON.parse(
+        '{"__proto__":{"showExpandedAbbreviation":"never"},"nested":{"__proto__":{"hidden":true}}}',
+      )
+
+      manager.updateFromPluginConfig({ [setting]: record })
+
+      const snapshot = manager.config[setting]
+      assert.strictEqual(Object.getPrototypeOf(snapshot), Object.prototype)
+      assert.isTrue(Object.prototype.hasOwnProperty.call(snapshot, '__proto__'))
+      assert.isUndefined(snapshot.showExpandedAbbreviation)
+      assert.deepEqual(snapshot.__proto__, { showExpandedAbbreviation: 'never' })
+      assert.notStrictEqual(snapshot.__proto__, record.__proto__)
+      assert.strictEqual(Object.getPrototypeOf(snapshot.nested), Object.prototype)
+      assert.deepEqual(Object.keys(snapshot.nested), ['__proto__'])
+      assert.isUndefined(snapshot.nested.hidden)
+    },
+  )
+
   it.each([
     ['an Emmet callable', { emmet: { preferences: createHostileCallable() } }],
     ['an unknown lint callable', { lint: { futureRule: createHostileCallable() } }],
@@ -438,6 +460,56 @@ describe('PluginConfigurationManager', () => {
     assert.strictEqual(manager.config.validate, false)
   })
 
+  it('should broadcast a legacy snapshot to every surviving project manager', () => {
+    const editorConfiguration = new EditorConfigurationManager()
+    const first = new ProjectConfigurationManager(editorConfiguration)
+    const second = new ProjectConfigurationManager(editorConfiguration)
+    first.updateFromProjectConfig({ tags: ['firstTag'] })
+    second.updateFromProjectConfig({ tags: ['secondTag'], validate: false })
+    editorConfiguration.updateFromPluginConfig(editorEnvelope(['editorTag']))
+    const legacy = new PluginConfigurationManager()
+    legacy.updateFromPluginConfig({ tags: ['runtimeTag'], validate: false })
+
+    editorConfiguration.activateLegacy(legacy.config)
+
+    assert.deepEqual(first.config, legacy.config)
+    assert.deepEqual(second.config, legacy.config)
+
+    editorConfiguration.updateFromPluginConfig(editorEnvelope([]))
+    assert.deepEqual(first.config.tags, ['firstTag'])
+    assert.isTrue(first.config.validate)
+    assert.deepEqual(second.config.tags, ['secondTag'])
+    assert.isFalse(second.config.validate)
+  })
+
+  it('should broadcast equivalent legacy snapshots only once across project callbacks', () => {
+    const editorConfiguration = new EditorConfigurationManager()
+    const updates = [0, 0, 0]
+    const managers = updates.map((_, index) => {
+      const manager = new ProjectConfigurationManager(editorConfiguration)
+      manager.onUpdatedConfig(() => updates[index]++)
+      return manager
+    })
+    const input = { emmet: { preferences: { compact: true } }, tags: ['runtimeTag'] }
+    const send = () => {
+      for (const _manager of managers) {
+        const normalized = new PluginConfigurationManager()
+        normalized.updateFromPluginConfig(input)
+        editorConfiguration.activateLegacy(normalized.config)
+      }
+    }
+
+    send()
+    assert.deepEqual(updates, [1, 1, 1])
+
+    input.emmet.preferences.compact = false
+    send()
+    assert.deepEqual(updates, [2, 2, 2])
+    for (const manager of managers) {
+      assert.deepEqual(manager.config.emmet, { preferences: { compact: false } })
+    }
+  })
+
   it('should restore the project base when an editor overlay follows a legacy replacement', () => {
     const editorConfiguration = new EditorConfigurationManager()
     const manager = new ProjectConfigurationManager(editorConfiguration)
@@ -490,6 +562,28 @@ describe('PluginConfigurationManager', () => {
 
     assert.strictEqual(updates, 1)
   })
+
+  it.each([{ extraTags: [] }, { extraTags: ['projectTag'] }])(
+    'should not notify when the first overlay leaves the effective configuration unchanged: $extraTags',
+    ({ extraTags }) => {
+      const editorConfiguration = new EditorConfigurationManager()
+      const manager = new ProjectConfigurationManager(editorConfiguration)
+      manager.updateFromProjectConfig({ tags: ['projectTag'], validate: false })
+      const initialConfiguration = manager.config
+      let updates = 0
+      manager.onUpdatedConfig(() => updates++)
+
+      editorConfiguration.updateFromPluginConfig(editorEnvelope(extraTags))
+
+      assert.strictEqual(updates, 0)
+      assert.strictEqual(manager.config, initialConfiguration)
+
+      editorConfiguration.updateFromPluginConfig(editorEnvelope(['editorTag']))
+      assert.strictEqual(updates, 1)
+      assert.deepEqual(manager.config.tags, ['projectTag', 'editorTag'])
+      assert.isFalse(manager.config.validate)
+    },
+  )
 
   it.each([
     ['an unknown protocol', editorEnvelope(['replacement'], { protocolVersion: 2 })],

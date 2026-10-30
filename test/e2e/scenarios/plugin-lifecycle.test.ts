@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import * as path from 'node:path'
+
 import type { server as tsserver } from 'typescript'
 import { assert, describe, it } from 'vitest'
 
@@ -300,6 +304,199 @@ describe.concurrent('Plugin lifecycle', () => {
     assert.deepEqual(disabled, { diagnostics: [], fixes: [] })
     assert.deepEqual(reset, { diagnostics: expectedDiagnostics, fixes: expectedFixes })
   })
+
+  it('should replace editor tags and validation after a project reload', async (context) => {
+    const server = startServer(context)
+    const source = mark(
+      'const base = styled.div`color:⟨base⟩red;`; const extra = editorTag`⟨property⟩boarder⟨/property⟩: 0; color:⟨extra⟩red;`; const runtime = runtimeTag`color:⟨runtime⟩red;`',
+    )
+    const file = server.open(source.text)
+    const complete = (name: string) => server.request('completions', { file, ...source.at(name) })
+    await server.configurePlugin(editorEnvelope(['editorTag']))
+    assert.include(
+      bodyOf(await complete('extra')).map(({ name }) => name),
+      'aliceblue',
+    )
+    assert.deepEqual(
+      spansAndText(pluginDiagnostics(await server.request('semanticDiagnosticsSync', { file }))),
+      [{ ...source.range('property'), text: "Unknown property: 'boarder'" }],
+    )
+
+    server.notify('reloadProjects', undefined)
+    await server.configurePlugin({ tags: ['runtimeTag'], validate: false })
+
+    assert.include(
+      bodyOf(await complete('runtime')).map(({ name }) => name),
+      'aliceblue',
+    )
+    assert.isFalse((await complete('extra')).success)
+    assert.isFalse((await complete('base')).success)
+    assert.deepEqual(
+      pluginDiagnostics(await server.request('semanticDiagnosticsSync', { file })),
+      [],
+    )
+  })
+
+  it('should isolate project tags, validation, lint, and Emmet in one server', async (context) => {
+    const server = startServer(context)
+    const source = mark(
+      'const base = styled.div`color:⟨base⟩`; const project = projectTag`color:⟨project⟩`; const extra = editorTag`⟨property⟩boarder⟨/property⟩: 0; color:⟨extra⟩`; const abbreviation = editorTag`m10-20⟨emmet⟩`',
+    )
+    const firstFile = server.open(source.text)
+    const secondFile = server.open(source.text, {
+      fileName: '../editor-configuration-project-fixture/main.ts',
+    })
+    const complete = (file: string, name: string) =>
+      server.request('completions', { file, ...source.at(name) })
+    await server.configurePlugin(editorEnvelope(['editorTag']))
+
+    for (const file of [firstFile, secondFile]) {
+      assert.include(
+        bodyOf(await complete(file, 'extra')).map(({ name }) => name),
+        'aliceblue',
+      )
+    }
+    assert.include(
+      bodyOf(await complete(firstFile, 'base')).map(({ name }) => name),
+      'aliceblue',
+    )
+    assert.isFalse((await complete(firstFile, 'project')).success)
+    assert.include(
+      bodyOf(await complete(secondFile, 'project')).map(({ name }) => name),
+      'aliceblue',
+    )
+    assert.isFalse((await complete(secondFile, 'base')).success)
+    assert.include(
+      bodyOf(await complete(firstFile, 'emmet')).map(({ name }) => name),
+      'margin: 10px 20px;',
+    )
+    assert.notInclude(
+      bodyOf(await complete(secondFile, 'emmet')).map(({ name }) => name),
+      'margin: 10px 20px;',
+    )
+    assert.include(
+      pluginDiagnostics(await server.request('semanticDiagnosticsSync', { file: firstFile })).map(
+        ({ text }) => text,
+      ),
+      "Unknown property: 'boarder'",
+    )
+    assert.deepEqual(
+      pluginDiagnostics(await server.request('semanticDiagnosticsSync', { file: secondFile })),
+      [],
+    )
+
+    const lintSource = mark(
+      'const extra = editorTag`⟨property⟩boarder⟨/property⟩: 0; color:⟨extra⟩red;`',
+    )
+    const lintDirectory = mkdtempSync(path.join(tmpdir(), 'styled-editor-lint-'))
+    context.onTestFinished(() => rmSync(lintDirectory, { force: true, recursive: true }))
+    writeFileSync(
+      path.join(lintDirectory, 'tsconfig.json'),
+      JSON.stringify({
+        compilerOptions: {
+          plugins: [
+            { lint: { unknownProperties: 'ignore' }, name: '@styled/typescript-styled-plugin' },
+          ],
+        },
+        files: ['main.ts'],
+      }),
+    )
+    const lintFile = path.join(lintDirectory, 'main.ts')
+    server.notify('open', { file: lintFile, fileContent: lintSource.text })
+    assert.include(
+      bodyOf(
+        await server.request('completions', { file: lintFile, ...lintSource.at('extra') }),
+      ).map(({ name }) => name),
+      'aliceblue',
+    )
+    assert.deepEqual(
+      pluginDiagnostics(await server.request('semanticDiagnosticsSync', { file: lintFile })),
+      [],
+    )
+
+    await server.configurePlugin(editorEnvelope([]))
+    assert.include(
+      bodyOf(await complete(firstFile, 'base')).map(({ name }) => name),
+      'aliceblue',
+    )
+    assert.include(
+      bodyOf(await complete(secondFile, 'project')).map(({ name }) => name),
+      'aliceblue',
+    )
+    assert.isFalse((await complete(firstFile, 'extra')).success)
+    assert.isFalse((await complete(secondFile, 'extra')).success)
+    await server.close()
+  })
+
+  it('should replay an editor overlay in a fresh server before opening a project', async (context) => {
+    const source = mark(
+      'const base = projectTag`color:⟨base⟩`; const extra = editorTag`color:⟨extra⟩`',
+    )
+    const results: tsserver.protocol.CompletionEntry[][][] = []
+    for (let session = 0; session < 2; session++) {
+      const server = startServer(context, { project: 'editor-configuration-project-fixture' })
+      if (session === 1) {
+        await server.configurePlugin(editorEnvelope(['editorTag']))
+      }
+      const file = server.open(source.text)
+      if (session === 0) {
+        await server.configurePlugin(editorEnvelope(['editorTag']))
+      }
+      const completions = []
+      for (const name of ['base', 'extra']) {
+        const entries = bodyOf(await server.request('completions', { file, ...source.at(name) }))
+        assert.include(
+          entries.map(({ name }) => name),
+          'aliceblue',
+        )
+        completions.push(entries)
+      }
+      results.push(completions)
+      await server.close()
+    }
+    assert.deepEqual(results[1], results[0])
+  })
+
+  it.for(['configured', 'inferred'] as const)(
+    'should load a global plugin with pre-create editor tags in a %s project',
+    async (kind, context) => {
+      const directory = mkdtempSync(path.join(tmpdir(), 'styled-global-editor-'))
+      context.onTestFinished(() => rmSync(directory, { force: true, recursive: true }))
+      if (kind === 'configured') {
+        writeFileSync(
+          path.join(directory, 'tsconfig.json'),
+          '{"compilerOptions":{},"files":["main.ts"]}',
+        )
+      }
+      const server = startServer(context, { globalPlugins: true })
+      await server.configurePlugin(editorEnvelope(['editorTag']))
+      const source = mark(
+        'const base = styled.div`color:⟨base⟩red;`; const extra = editorTag`⟨property⟩boarder⟨/property⟩: 0; color:⟨extra⟩red;`',
+      )
+      const file = path.join(directory, 'main.ts')
+      server.notify('open', { file, fileContent: source.text })
+      for (const name of ['base', 'extra']) {
+        assert.include(
+          bodyOf(await server.request('completions', { file, ...source.at(name) })).map(
+            ({ name }) => name,
+          ),
+          'aliceblue',
+        )
+      }
+      assert.deepEqual(
+        spansAndText(pluginDiagnostics(await server.request('semanticDiagnosticsSync', { file }))),
+        [{ ...source.range('property'), text: "Unknown property: 'boarder'" }],
+      )
+      await server.configurePlugin(editorEnvelope([]))
+      assert.include(
+        bodyOf(await server.request('completions', { file, ...source.at('base') })).map(
+          ({ name }) => name,
+        ),
+        'aliceblue',
+      )
+      assert.isFalse((await server.request('completions', { file, ...source.at('extra') })).success)
+    },
+  )
 
   it.for([
     [

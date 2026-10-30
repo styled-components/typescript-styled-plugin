@@ -3,7 +3,7 @@
 import { decorateWithTemplateLanguageService } from 'typescript-template-language-service-decorator'
 import type * as ts from 'typescript/lib/tsserverlibrary.js'
 
-import { describeValue } from '../configuration/plugin-configuration.ts'
+import { describeValue, PluginConfigurationManager } from '../configuration/plugin-configuration.ts'
 import { StyledTemplateLanguageService } from '../template-language-service.ts'
 import { getTemplateSettings } from '../template-settings.ts'
 import { StyledVirtualDocumentProvider } from '../virtual-document/styled-virtual-document-provider.ts'
@@ -43,8 +43,9 @@ export class TsServerStyledPlugin {
       readSuccessfully &&
       isLegacyConfigurationOverride(info.config, projectConfiguration)
     ) {
-      configurationManager.updateFromPluginConfig(info.config, logger)
-      editorConfiguration.activateLegacy(configurationManager.config)
+      const legacyConfiguration = new PluginConfigurationManager()
+      legacyConfiguration.updateFromPluginConfig(info.config, logger)
+      editorConfiguration.activateLegacy(legacyConfiguration.config, logger)
     }
     this.registerProjectConfiguration(configurationManager, logger)
     this.logConfigurationSummary(configurationManager, logger)
@@ -85,17 +86,14 @@ export class TsServerStyledPlugin {
     if (isEditorConfiguration === undefined) {
       return
     }
-    let normalizedLegacyConfiguration: ProjectConfigurationManager['config'] | undefined
+    if (!isEditorConfiguration) {
+      const legacyConfiguration = new PluginConfigurationManager()
+      legacyConfiguration.updateFromPluginConfig(config, logger)
+      this.editorConfiguration?.activateLegacy(legacyConfiguration.config, logger)
+    }
     this.forEachProjectConfiguration((manager, projectLogger) => {
-      if (!isEditorConfiguration) {
-        manager.updateFromPluginConfig(config, projectLogger)
-        normalizedLegacyConfiguration ??= manager.config
-      }
       this.logConfigurationSummary(manager, projectLogger)
     })
-    if (normalizedLegacyConfiguration) {
-      this.editorConfiguration?.activateLegacy(normalizedLegacyConfiguration)
-    }
   }
 
   private forEachProjectConfiguration(

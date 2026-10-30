@@ -41,26 +41,36 @@ async function main(): Promise<void> {
   let survivingUpdates = 0
   survivingProject.onUpdatedConfig(() => survivingUpdates++)
 
-  function createDiscardedProject(): WeakRef<ProjectConfigurationManager> {
+  function createDiscardedProject() {
     const plugin = new TsServerStyledPlugin(ts, getEditorConfiguration)
     plugin.create(createPluginCreateInfo(projectService, { tags: ['discardedTag'] }))
-    const project = [...getListeners(editorConfiguration)]
-      .map((reference) => reference.deref())
-      .find((manager) => manager !== survivingProject)
-    assert.ok(project)
-    return new WeakRef(project)
+    const registration = [...getRegistrations(plugin)][0]
+    assert.ok(registration)
+    assert.ok(registration.logger.deref())
+    assert.ok(registration.manager.deref())
+    return registration
   }
 
-  const discardedProject = createDiscardedProject()
-  for (let attempt = 0; attempt < 20; attempt++) {
-    await new Promise((resolve) => setImmediate(resolve))
-    gc()
-    if (!discardedProject.deref()) {
-      break
+  for (let round = 0; round < 3; round++) {
+    const discardedProjects = Array.from({ length: 32 }, createDiscardedProject)
+    for (let attempt = 0; attempt < 20; attempt++) {
+      await new Promise((resolve) => setImmediate(resolve))
+      gc()
+      if (discardedProjects.every(({ logger, manager }) => !logger.deref() && !manager.deref())) {
+        break
+      }
     }
+    for (const { logger, manager } of discardedProjects) {
+      assert.equal(logger.deref(), undefined, 'the discarded project logger must be collectible')
+      assert.equal(manager.deref(), undefined, 'the discarded project manager must be collectible')
+    }
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(
+      getListeners(editorConfiguration).size,
+      1,
+      'dead listener shells must be finalized',
+    )
   }
-
-  assert.equal(discardedProject.deref(), undefined, 'the discarded project must be collectible')
 
   survivingPlugin.onConfigurationChanged(editorEnvelope(['editorTag']))
 
@@ -121,6 +131,17 @@ function getListeners(
       listeners: ReadonlySet<WeakRef<ProjectConfigurationManager>>
     }
   ).listeners
+}
+
+function getRegistrations(plugin: TsServerStyledPlugin): ReadonlySet<{
+  readonly logger: WeakRef<object>
+  readonly manager: WeakRef<ProjectConfigurationManager>
+}> {
+  return (
+    plugin as unknown as {
+      projectConfigurations: ReturnType<typeof getRegistrations>
+    }
+  ).projectConfigurations
 }
 
 main().catch((error: unknown) => {
