@@ -12,8 +12,6 @@ const resolvedConfiguration: api.StyledPluginConfiguration = configurationManage
 const editorConfiguration: api.StyledPluginEditorConfigurationEnvelope = {
   editorConfiguration: {
     extraTags: ['globalStyle'],
-    protocolVersion: api.EDITOR_CONFIGURATION_PROTOCOL_VERSION,
-    source: 'example-editor.css-templates',
   },
 }
 const templateSettings = api.getTemplateSettings(configurationManager)

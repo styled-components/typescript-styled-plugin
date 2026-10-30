@@ -29,10 +29,9 @@ function expectApiExports(module, description) {
   for (const name of API_EXPORTS) {
     expectFunction(module[name], `${name} from ${description}`)
   }
-  if (module[EDITOR_CONFIGURATION_PROTOCOL_VERSION_EXPORT] !== 1) {
+  if (EDITOR_CONFIGURATION_PROTOCOL_VERSION_EXPORT in module) {
     throw new TypeError(
-      `${EDITOR_CONFIGURATION_PROTOCOL_VERSION_EXPORT} from ${description} must be 1; received ` +
-        `${String(module[EDITOR_CONFIGURATION_PROTOCOL_VERSION_EXPORT])}.`,
+      `${EDITOR_CONFIGURATION_PROTOCOL_VERSION_EXPORT} must not be exported from ${description}.`,
     )
   }
 }

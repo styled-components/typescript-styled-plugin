@@ -900,6 +900,7 @@ describe('StyledVirtualDocumentProvider', () => {
         '@layer x { color: red; }',
         [
           ['styled.div', []],
+          ['globalStyle', []],
           ['createGlobalStyle', ['{ expected']],
         ],
       ],

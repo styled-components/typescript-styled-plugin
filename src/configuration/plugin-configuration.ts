@@ -59,12 +59,8 @@ export interface StyledPluginConfiguration {
   readonly validate: boolean
 }
 
-export const EDITOR_CONFIGURATION_PROTOCOL_VERSION = 1
-
 export interface StyledPluginEditorConfiguration {
   readonly extraTags: ReadonlyArray<string>
-  readonly protocolVersion: typeof EDITOR_CONFIGURATION_PROTOCOL_VERSION
-  readonly source: string
 }
 
 export interface StyledPluginEditorConfigurationEnvelope {
@@ -404,46 +400,7 @@ function getArrayLength(value: ReadonlyArray<unknown>): number | undefined {
 function cloneConfigurationRecord(
   value: Readonly<Record<string, unknown>> | undefined,
 ): Record<string, unknown> | undefined {
-  if (value === undefined) {
-    return undefined
-  }
-  return cloneConfigurationValue(value, new WeakMap()) as Record<string, unknown>
-}
-
-function cloneConfigurationValue(value: unknown, seen: WeakMap<object, unknown>): unknown {
-  if (typeof value === 'function') {
-    throw new TypeError('Callable configuration values cannot be snapshotted safely.')
-  }
-  if (value === null || typeof value !== 'object') {
-    return value
-  }
-  const cached = seen.get(value)
-  if (cached !== undefined) {
-    return cached
-  }
-  if (Array.isArray(value)) {
-    const clone: unknown[] = []
-    seen.set(value, clone)
-    const length = getArrayLength(value)
-    if (length === undefined) {
-      throw new TypeError('Configuration array length is invalid.')
-    }
-    for (let index = 0; index < length; index++) {
-      clone.push(cloneConfigurationValue(value[index], seen))
-    }
-    return clone
-  }
-  const clone: Record<string, unknown> = {}
-  seen.set(value, clone)
-  for (const [name, item] of Object.entries(value)) {
-    Object.defineProperty(clone, name, {
-      configurable: true,
-      enumerable: true,
-      value: cloneConfigurationValue(item, seen),
-      writable: true,
-    })
-  }
-  return clone
+  return value === undefined ? undefined : Object.fromEntries(Object.entries(value))
 }
 
 function normalizeBoolean(value: unknown, name: string, reporter: Reporter): boolean | undefined {

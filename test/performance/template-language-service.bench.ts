@@ -1,8 +1,6 @@
 import { isMainThread } from 'node:worker_threads'
 
 import { Bench } from 'tinybench'
-import { isTagged } from 'typescript-template-language-service-decorator/lib/nodes.js'
-import * as ts from 'typescript/lib/tsserverlibrary.js'
 
 import { formatSeconds, runBounded, serveBounded } from '../../scripts/bounded-worker.ts'
 import {
@@ -10,7 +8,6 @@ import {
   MAX_VALIDATION_CACHE_ENTRIES,
   VALIDATION_CACHE_DIAGNOSTIC_OVERHEAD_BYTES,
 } from '../../src/features/diagnostics.ts'
-import { MAX_EDITOR_TAG_COUNT } from '../../src/tsserver/editor-configuration.ts'
 import {
   createDiagnosticsTemplate,
   createFoldingTemplate,
@@ -68,24 +65,6 @@ function createManyTemplateContexts(count: number) {
  * completion fixture already runs plugin code, which the main thread never does.
  */
 function createBenchmark(reportProgress: (stage: string) => void): Bench {
-  const maximumEditorTags = Array.from(
-    { length: MAX_EDITOR_TAG_COUNT },
-    (_, index) => `editorTag${index}`,
-  )
-  const editorTagSource = ts.createSourceFile(
-    'editor-tag-benchmark.ts',
-    `editorTag${MAX_EDITOR_TAG_COUNT - 1}\`color: red;\``,
-    ts.ScriptTarget.Latest,
-    true,
-  )
-  const editorTagStatement = editorTagSource.statements[0]
-  if (!editorTagStatement || !ts.isExpressionStatement(editorTagStatement)) {
-    throw new Error('Expected an expression statement for the editor tag benchmark fixture.')
-  }
-  if (!ts.isTaggedTemplateExpression(editorTagStatement.expression)) {
-    throw new Error('Expected a tagged template expression for the editor tag benchmark fixture.')
-  }
-  const editorTagExpression = editorTagStatement.expression
   const largeTemplate = createLargeTemplate(400)
   const largeTemplateContextFactory = createTemplateContextFactory(largeTemplate)
   const largeTemplatePosition = largeTemplateContextFactory().toPosition(largeTemplate.length)
@@ -151,9 +130,6 @@ function createBenchmark(reportProgress: (stage: string) => void): Bench {
    * path a real edit-then-request-again sequence takes.
    */
   benchmark
-    .add('matches the last of 64 configured tags', () => {
-      isTagged(editorTagExpression, maximumEditorTags)
-    })
     .add('completes a large template', () => {
       const service = createTemplateLanguageService()
       service.getCompletionsAtPosition(largeTemplateContextFactory(), largeTemplatePosition)

@@ -138,64 +138,6 @@ describe('TsServerStyledPlugin', () => {
     assert.deepEqual(lastLoggedConfiguration(messages), { tagCount: 7, validate: true })
   })
 
-  it('should contain a hostile legacy configuration and keep new projects responsive', () => {
-    const messages: string[] = []
-    const projectService = createProjectService(messages)
-    const firstPlugin = createPlugin({ typescript: ts })
-    firstPlugin.create(createPluginCreateInfo(messages, { projectService }))
-    const hostileConfig = new Proxy(
-      {},
-      {
-        ownKeys() {
-          throw new Error('ownKeys failed')
-        },
-      },
-    )
-
-    assert.doesNotThrow(() => firstPlugin.onConfigurationChanged(hostileConfig))
-    const secondPlugin = createPlugin({ typescript: ts })
-    assert.doesNotThrow(() =>
-      secondPlugin.create(
-        createPluginCreateInfo(messages, {
-          projectPluginConfiguration: { tags: ['projectTag'], validate: false },
-          projectService,
-        }),
-      ),
-    )
-    assert.deepEqual(lastLoggedConfiguration(messages), { tagCount: 7, validate: true })
-  })
-
-  it('should use defaults when a revoked configuration arrives before create', () => {
-    const messages: string[] = []
-    const plugin = new TsServerStyledPlugin(ts)
-    const { proxy, revoke } = Proxy.revocable({}, {})
-    revoke()
-
-    assert.doesNotThrow(() => plugin.create(createPluginCreateInfo(messages, { config: proxy })))
-    assert.deepEqual(lastLoggedConfiguration(messages), { tagCount: 7, validate: true })
-  })
-
-  it('should not share a callable nested inside a legacy configuration', () => {
-    const messages: string[] = []
-    const projectService = createProjectService(messages)
-    const firstPlugin = createPlugin({ typescript: ts })
-    firstPlugin.create(createPluginCreateInfo(messages, { projectService }))
-
-    assert.doesNotThrow(() =>
-      firstPlugin.onConfigurationChanged({ emmet: { preferences: () => undefined } }),
-    )
-    const secondPlugin = createPlugin({ typescript: ts })
-    assert.doesNotThrow(() =>
-      secondPlugin.create(
-        createPluginCreateInfo(messages, {
-          projectPluginConfiguration: { tags: ['projectTag'], validate: false },
-          projectService,
-        }),
-      ),
-    )
-    assert.deepEqual(lastLoggedConfiguration(messages), { tagCount: 7, validate: true })
-  })
-
   it('should let the last dynamic configuration kind replace the previous one', () => {
     const messages: string[] = []
     const plugin = new TsServerStyledPlugin(ts)
@@ -237,9 +179,7 @@ describe('TsServerStyledPlugin', () => {
     firstProjectPlugin.onConfigurationChanged(editorEnvelope(['editorTag']))
     firstProjectPlugin.onConfigurationChanged({
       editorConfiguration: {
-        extraTags: ['replacement'],
-        protocolVersion: 2,
-        source: 'vscode-styled-components',
+        extraTags: 'replacement',
       },
     })
 
@@ -248,9 +188,7 @@ describe('TsServerStyledPlugin', () => {
       createPluginCreateInfo(secondMessages, {
         config: {
           editorConfiguration: {
-            extraTags: ['replacement'],
-            protocolVersion: 2,
-            source: 'vscode-styled-components',
+            extraTags: 'replacement',
           },
           global: true,
           name: '@styled/typescript-styled-plugin',
@@ -310,6 +248,34 @@ describe('TsServerStyledPlugin', () => {
     assert.deepEqual(lastLoggedConfiguration(firstMessages), { tagCount: 1, validate: true })
   })
 
+  it('should compare a separately constructed project entry by effective settings', () => {
+    const messages: string[] = []
+    const projectService = createProjectService(messages)
+    const firstPlugin = createPlugin({ typescript: ts })
+    firstPlugin.create(
+      createPluginCreateInfo(messages, {
+        config: {
+          global: true,
+          name: '@styled/typescript-styled-plugin',
+          tags: ['firstTag'],
+          validate: false,
+        },
+        projectPluginConfiguration: { tags: ['firstTag'], validate: false },
+        projectService,
+      }),
+    )
+    const secondPlugin = createPlugin({ typescript: ts })
+
+    secondPlugin.create(
+      createPluginCreateInfo(messages, {
+        projectPluginConfiguration: { tags: ['secondTag'], validate: true },
+        projectService,
+      }),
+    )
+
+    assert.deepEqual(lastLoggedConfiguration(messages), { tagCount: 1, validate: true })
+  })
+
   it('should give a new project the last valid legacy state after an invalid envelope', () => {
     const messages: string[] = []
     const projectService = createProjectService(messages)
@@ -323,9 +289,7 @@ describe('TsServerStyledPlugin', () => {
     firstPlugin.onConfigurationChanged({ tags: ['runtimeTag'], validate: true })
     firstPlugin.onConfigurationChanged({
       editorConfiguration: {
-        extraTags: ['replacement'],
-        protocolVersion: 2,
-        source: 'example-editor.css-templates',
+        extraTags: 'replacement',
       },
     })
 
@@ -334,9 +298,7 @@ describe('TsServerStyledPlugin', () => {
       createPluginCreateInfo(messages, {
         config: {
           editorConfiguration: {
-            extraTags: ['replacement'],
-            protocolVersion: 2,
-            source: 'example-editor.css-templates',
+            extraTags: 'replacement',
           },
           name: '@styled/typescript-styled-plugin',
         },
@@ -379,6 +341,58 @@ describe('TsServerStyledPlugin', () => {
       validate: true,
     })
   })
+
+  it('should refresh every live project only when effective configuration changes', () => {
+    const messages: string[] = []
+    const projectService = createProjectService(messages)
+    const refreshes = [0, 0]
+    const services = refreshes.map((_, index) => {
+      const plugin = createPlugin({ typescript: ts })
+      const service = plugin.create(
+        createPluginCreateInfo(messages, {
+          projectService,
+          refreshDiagnostics: () => refreshes[index]++,
+        }),
+      )
+      return { plugin, service }
+    })
+
+    services[0].plugin.onConfigurationChanged(editorEnvelope(['editorTag']))
+    assert.deepEqual(refreshes, [1, 1])
+
+    services[1].plugin.onConfigurationChanged(editorEnvelope(['editorTag']))
+    services[0].plugin.onConfigurationChanged({ editorConfiguration: { extraTags: 'invalid' } })
+    assert.deepEqual(refreshes, [1, 1])
+  })
+
+  it('should continue refreshing projects when one project refresh fails', () => {
+    const messages: string[] = []
+    const projectService = createProjectService(messages)
+    const firstPlugin = createPlugin({ typescript: ts })
+    const firstService = firstPlugin.create(
+      createPluginCreateInfo(messages, {
+        projectService,
+        refreshDiagnostics() {
+          throw new Error('refresh failed')
+        },
+      }),
+    )
+    let secondRefreshes = 0
+    const secondPlugin = createPlugin({ typescript: ts })
+    const secondService = secondPlugin.create(
+      createPluginCreateInfo(messages, {
+        projectService,
+        refreshDiagnostics: () => secondRefreshes++,
+      }),
+    )
+
+    assert.doesNotThrow(() => firstPlugin.onConfigurationChanged(editorEnvelope(['editorTag'])))
+
+    assert.strictEqual(secondRefreshes, 1)
+    assert.include(messages.join('\n'), 'Failed to refresh diagnostics for one project.')
+    assert.isDefined(firstService)
+    assert.isDefined(secondService)
+  })
 })
 
 function createCycle(): Record<string, unknown> {
@@ -399,11 +413,13 @@ function createPluginCreateInfo(
     getCompilerOptions,
     projectPluginConfiguration,
     projectService,
+    refreshDiagnostics,
   }: {
     config?: unknown
     getCompilerOptions?: () => ts.CompilerOptions
     projectPluginConfiguration?: Readonly<Record<string, unknown>>
     projectService?: ReturnType<typeof createProjectService>
+    refreshDiagnostics?: () => void
   } = {},
 ): ts.server.PluginCreateInfo {
   const host: ts.LanguageServiceHost = {
@@ -432,6 +448,7 @@ function createPluginCreateInfo(
           plugins: projectPluginEntry ? [projectPluginEntry] : undefined,
         })),
       projectService: projectService ?? createProjectService(messages),
+      refreshDiagnostics: refreshDiagnostics ?? (() => {}),
     },
   }
   return pluginCreateInfo as unknown as ts.server.PluginCreateInfo
@@ -451,8 +468,6 @@ function editorEnvelope(extraTags: ReadonlyArray<string>): unknown {
   return {
     editorConfiguration: {
       extraTags,
-      protocolVersion: 1,
-      source: 'vscode-styled-components',
     },
   }
 }

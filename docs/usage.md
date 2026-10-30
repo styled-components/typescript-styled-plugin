@@ -259,36 +259,36 @@ An editor or extension can send settings at runtime through tsserver's
 `tsconfig.json` as a whole rather than merging into them: a setting the request
 leaves out returns to its default, not to the `tsconfig.json` value.
 
-Editor integrations can instead send the version 1 editor configuration
-envelope. Its `extraTags` are appended to each project's configured tags and
-an empty list removes the additions. The overlay does not change `validate`,
-`lint`, or `emmet`:
+Editor integrations can instead send an editor configuration envelope. Its
+`extraTags` are appended to each project's configured tags and a literal empty
+list removes the additions. The overlay does not change `validate`, `lint`, or
+`emmet`:
 
 ```json
 {
   "editorConfiguration": {
-    "protocolVersion": 1,
-    "source": "example-editor.css-templates",
     "extraTags": ["globalStyle"]
   }
 }
 ```
 
-Programmatic integrations should import `EDITOR_CONFIGURATION_PROTOCOL_VERSION`
-from `@styled/typescript-styled-plugin/api` and use it as `protocolVersion`
-instead of repeating the numeric version.
-
 This envelope is a general integration protocol for editor extensions, language
 server adapters, and other tsserver hosts, not a setting to copy into
-`tsconfig.json`. Each integration supplies a stable, non-empty `source`
-identifier of at most 128 UTF-16 code units. Version 1 keeps one complete overlay
-per tsserver project service: a later valid envelope replaces the previous one
-even when its source differs, so a host with multiple senders must coordinate
-them before sending. Tag matching remains text-based and only applies to tagged
-templates; it does not inspect imports or change syntax highlighting. Protocol
-v1 accepts at most 64 additional tags, 256 UTF-16 code units per raw string, and
-4,096 across all raw strings; an over-limit update is ignored so it cannot add
-unbounded work to normalization or every language request.
+`tsconfig.json`. One complete overlay is kept per tsserver project service, so a
+later valid envelope replaces the previous one. A host with multiple senders
+must coordinate them before sending.
+
+String entries are trimmed and stably deduplicated. Non-string and empty entries
+are skipped. A non-empty array whose every entry is skipped is invalid and keeps
+the previous dynamic state; it does not clear an existing overlay. Only
+`extraTags: []` explicitly clears the overlay. There is no protocol count or
+length limit.
+
+An extra tag is only another text string for tagged-template matching. For
+example, adding `globalStyle` makes `` globalStyle`...` `` eligible for CSS
+language features, but does not give it the global stylesheet parsing mode used
+by built-in tags such as `createGlobalStyle`, `globalCss`, and `injectGlobal`.
+Tag matching does not inspect imports or change syntax highlighting.
 
 Legacy runtime replacement and the editor overlay are mutually exclusive. A
 normal `configurePlugin` payload deactivates the overlay. A later valid editor
@@ -298,6 +298,10 @@ the result stable when a host restarts tsserver and replays its last valid plugi
 configuration. Invalid envelopes preserve the last valid overlay only in the
 current tsserver session; a host that persists configuration must not replace its
 stored last-valid payload with one that fails protocol validation.
+
+When a valid runtime configuration changes the effective settings, the plugin
+asks every live project to refresh diagnostics. Open files therefore update
+without waiting for the next edit.
 
 ## Emmet completions
 
