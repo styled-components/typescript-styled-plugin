@@ -448,7 +448,13 @@ describe.concurrent('Plugin lifecycle', () => {
     })
     const complete = (file: string, name: string) =>
       server.request('completions', { file, ...source.at(name) })
+    await complete(secondFile, 'project')
+    server.takeProjectsUpdatedInBackgroundEvents()
     await server.configurePlugin(editorEnvelope(['editorTag']))
+    assert.deepEqual(
+      server.takeProjectsUpdatedInBackgroundEvents().map(({ body }) => body.openFiles),
+      [[firstFile, secondFile]],
+    )
 
     for (const file of [firstFile, secondFile]) {
       assert.include(
@@ -514,7 +520,12 @@ describe.concurrent('Plugin lifecycle', () => {
       [],
     )
 
+    server.takeProjectsUpdatedInBackgroundEvents()
     await server.configurePlugin(editorEnvelope([]))
+    assert.deepEqual(
+      server.takeProjectsUpdatedInBackgroundEvents().map(({ body }) => body.openFiles),
+      [[firstFile, secondFile, lintFile]],
+    )
     assert.include(
       bodyOf(await complete(firstFile, 'base')).map(({ name }) => name),
       'aliceblue',
@@ -526,6 +537,72 @@ describe.concurrent('Plugin lifecycle', () => {
     assert.isFalse((await complete(firstFile, 'extra')).success)
     assert.isFalse((await complete(secondFile, 'extra')).success)
     await server.close()
+  })
+
+  it('should keep configuration current when external projects close and reopen', async (context) => {
+    const directory = mkdtempSync(path.join(tmpdir(), 'styled-editor-close-'))
+    context.onTestFinished(() => rmSync(directory, { force: true, recursive: true }))
+    const server = startServer(context, { globalPlugins: true })
+    const source = mark(
+      'const base = styled.div`color:⟨base⟩red;`; const extra = editorTag`color:⟨extra⟩red;`; const next = nextTag`color:⟨next⟩red;`',
+    )
+    const projects = ['first', 'second'].map((name) => {
+      const file = path.join(directory, `${name}.ts`)
+      writeFileSync(file, source.text)
+      return {
+        file,
+        options: {},
+        projectFileName: path.join(directory, `${name}.project`),
+        rootFiles: [{ fileName: file }],
+      }
+    })
+    const complete = (file: string, name: string) =>
+      server.request('completions', { file, ...source.at(name) })
+    for (const project of projects) {
+      assert.isTrue((await server.request('openExternalProject', project)).success)
+      assert.include(
+        bodyOf(await complete(project.file, 'base')).map(({ name }) => name),
+        'aliceblue',
+      )
+      assert.isFalse((await complete(project.file, 'extra')).success)
+    }
+
+    await server.configurePlugin(editorEnvelope(['editorTag']))
+    for (const project of projects) {
+      assert.include(
+        bodyOf(await complete(project.file, 'extra')).map(({ name }) => name),
+        'aliceblue',
+      )
+    }
+
+    assert.isTrue(
+      (
+        await server.request('closeExternalProject', {
+          projectFileName: projects[0].projectFileName,
+        })
+      ).success,
+    )
+    await server.configurePlugin(editorEnvelope(['nextTag']))
+    assert.include(
+      bodyOf(await complete(projects[1].file, 'next')).map(({ name }) => name),
+      'aliceblue',
+    )
+    assert.isFalse((await complete(projects[1].file, 'extra')).success)
+
+    assert.isTrue(
+      (
+        await server.request('closeExternalProject', {
+          projectFileName: projects[1].projectFileName,
+        })
+      ).success,
+    )
+    await server.configurePlugin(editorEnvelope(['editorTag']))
+    assert.isTrue((await server.request('openExternalProject', projects[0])).success)
+    assert.include(
+      bodyOf(await complete(projects[0].file, 'extra')).map(({ name }) => name),
+      'aliceblue',
+    )
+    assert.isFalse((await complete(projects[0].file, 'next')).success)
   })
 
   it('should replay an editor overlay in a fresh server before opening a project', async (context) => {

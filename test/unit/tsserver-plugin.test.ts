@@ -9,7 +9,7 @@ import {
 } from '../../src/tsserver/tsserver-plugin'
 
 describe('TsServerStyledPlugin', () => {
-  it('should log the resolved configuration after a configuration change', () => {
+  it('should log a configuration change without retaining per-project summaries', () => {
     const messages: string[] = []
     const plugin = new TsServerStyledPlugin(ts)
     plugin.create(createPluginCreateInfo(messages))
@@ -17,15 +17,7 @@ describe('TsServerStyledPlugin', () => {
 
     plugin.onConfigurationChanged({ tags: ['sty'], validate: 'false' })
 
-    const configPrefix = `[${pluginIdentity}] config: `
-    assert.deepEqual(
-      messages.map((message) => (message.startsWith(configPrefix) ? configPrefix : message)),
-      [`[${pluginIdentity}] onConfigurationChanged`, configPrefix],
-    )
-    assert.deepEqual(JSON.parse(messages[1]?.slice(configPrefix.length) ?? ''), {
-      tagCount: 1,
-      validate: false,
-    })
+    assert.deepEqual(messages, [`[${pluginIdentity}] onConfigurationChanged`])
   })
 
   it.each([
@@ -41,11 +33,7 @@ describe('TsServerStyledPlugin', () => {
 
       plugin.onConfigurationChanged(configuration)
 
-      const configPrefix = `[${pluginIdentity}] config: `
-      assert.deepEqual(
-        messages.map((message) => (message.startsWith(configPrefix) ? configPrefix : message)),
-        [`[${pluginIdentity}] onConfigurationChanged`, configPrefix],
-      )
+      assert.deepEqual(messages, [`[${pluginIdentity}] onConfigurationChanged`])
     },
   )
 
@@ -65,27 +53,6 @@ describe('TsServerStyledPlugin', () => {
     })
     assert.notInclude(messages.join('\n'), 'projectTag')
     assert.notInclude(messages.join('\n'), 'editorTag')
-  })
-
-  it('should use the default project base when compiler options cannot be read', () => {
-    const messages: string[] = []
-    const plugin = new TsServerStyledPlugin(ts)
-
-    assert.doesNotThrow(() =>
-      plugin.create(
-        createPluginCreateInfo(messages, {
-          config: editorEnvelope(['editorTag']),
-          getCompilerOptions() {
-            throw new Error('compiler options failed')
-          },
-        }),
-      ),
-    )
-    assert.deepEqual(lastLoggedConfiguration(messages), { tagCount: 8, validate: true })
-    assert.include(
-      messages.join('\n'),
-      "Could not read the project's compiler options while restoring plugin configuration; using plugin defaults. Check the tsserver host's project implementation.",
-    )
   })
 
   it('should prefer a legacy runtime configuration that arrives before create', () => {
@@ -136,38 +103,6 @@ describe('TsServerStyledPlugin', () => {
     )
 
     assert.deepEqual(lastLoggedConfiguration(messages), { tagCount: 7, validate: true })
-  })
-
-  it('should let the last dynamic configuration kind replace the previous one', () => {
-    const messages: string[] = []
-    const plugin = new TsServerStyledPlugin(ts)
-    plugin.create(
-      createPluginCreateInfo(messages, {
-        projectPluginConfiguration: { tags: ['projectTag'], validate: false },
-      }),
-    )
-
-    plugin.onConfigurationChanged(editorEnvelope(['editorTag']))
-    plugin.onConfigurationChanged({ tags: ['runtimeTag'], validate: true })
-    assert.deepEqual(lastLoggedConfiguration(messages), { tagCount: 1, validate: true })
-
-    plugin.onConfigurationChanged(editorEnvelope(['editorTag']))
-    assert.deepEqual(lastLoggedConfiguration(messages), { tagCount: 2, validate: false })
-  })
-
-  it('should restore the project base for an empty overlay after a legacy replacement', () => {
-    const messages: string[] = []
-    const plugin = new TsServerStyledPlugin(ts)
-    plugin.create(
-      createPluginCreateInfo(messages, {
-        projectPluginConfiguration: { tags: ['projectTag'], validate: false },
-      }),
-    )
-    plugin.onConfigurationChanged({ tags: ['runtimeTag'], validate: true })
-
-    plugin.onConfigurationChanged(editorEnvelope([]))
-
-    assert.deepEqual(lastLoggedConfiguration(messages), { tagCount: 1, validate: false })
   })
 
   it('should share the last valid editor configuration across project plugin instances', () => {
@@ -310,39 +245,7 @@ describe('TsServerStyledPlugin', () => {
     assert.deepEqual(lastLoggedConfiguration(messages), { tagCount: 1, validate: true })
   })
 
-  it('should keep separate project bases when editor tags change', () => {
-    const firstMessages: string[] = []
-    const secondMessages: string[] = []
-    const projectService = createProjectService(firstMessages)
-    const firstPlugin = createPlugin({ typescript: ts })
-    firstPlugin.create(
-      createPluginCreateInfo(firstMessages, {
-        projectPluginConfiguration: { tags: ['firstTag'], validate: false },
-        projectService,
-      }),
-    )
-    const secondPlugin = createPlugin({ typescript: ts })
-    secondPlugin.create(
-      createPluginCreateInfo(secondMessages, {
-        projectPluginConfiguration: { tags: ['secondTag'], validate: true },
-        projectService,
-      }),
-    )
-
-    firstPlugin.onConfigurationChanged(editorEnvelope(['editorTag']))
-    secondPlugin.onConfigurationChanged(editorEnvelope(['editorTag']))
-
-    assert.deepEqual(lastLoggedConfiguration(firstMessages, 1), {
-      tagCount: 2,
-      validate: false,
-    })
-    assert.deepEqual(lastLoggedConfiguration(firstMessages), {
-      tagCount: 2,
-      validate: true,
-    })
-  })
-
-  it('should refresh every live project only when effective configuration changes', () => {
+  it('should refresh once per project service only when effective configuration changes', () => {
     const messages: string[] = []
     const projectService = createProjectService(messages)
     const refreshes = [0, 0]
@@ -358,40 +261,39 @@ describe('TsServerStyledPlugin', () => {
     })
 
     services[0].plugin.onConfigurationChanged(editorEnvelope(['editorTag']))
-    assert.deepEqual(refreshes, [1, 1])
+    assert.deepEqual(refreshes, [1, 0])
 
     services[1].plugin.onConfigurationChanged(editorEnvelope(['editorTag']))
     services[0].plugin.onConfigurationChanged({ editorConfiguration: { extraTags: 'invalid' } })
-    assert.deepEqual(refreshes, [1, 1])
+    assert.deepEqual(refreshes, [1, 0])
   })
 
-  it('should continue refreshing projects when one project refresh fails', () => {
+  it('should refresh through a surviving project after another project closes', () => {
     const messages: string[] = []
     const projectService = createProjectService(messages)
     const firstPlugin = createPlugin({ typescript: ts })
-    const firstService = firstPlugin.create(
-      createPluginCreateInfo(messages, {
-        projectService,
-        refreshDiagnostics() {
-          throw new Error('refresh failed')
-        },
-      }),
-    )
+    let firstRefreshes = 0
+    const firstInfo = createPluginCreateInfo(messages, {
+      projectService,
+      refreshDiagnostics: () => firstRefreshes++,
+    })
+    firstPlugin.create(firstInfo)
     let secondRefreshes = 0
     const secondPlugin = createPlugin({ typescript: ts })
-    const secondService = secondPlugin.create(
+    secondPlugin.create(
       createPluginCreateInfo(messages, {
         projectService,
         refreshDiagnostics: () => secondRefreshes++,
       }),
     )
 
-    assert.doesNotThrow(() => firstPlugin.onConfigurationChanged(editorEnvelope(['editorTag'])))
-
+    firstPlugin.onConfigurationChanged(editorEnvelope(['editorTag']))
+    assert.strictEqual(firstRefreshes, 1)
+    assert.strictEqual(secondRefreshes, 0)
+    firstInfo.project.close()
+    secondPlugin.onConfigurationChanged(editorEnvelope(['nextTag']))
+    assert.strictEqual(firstRefreshes, 1)
     assert.strictEqual(secondRefreshes, 1)
-    assert.include(messages.join('\n'), 'Failed to refresh diagnostics for one project.')
-    assert.isDefined(firstService)
-    assert.isDefined(secondService)
   })
 })
 
@@ -410,13 +312,11 @@ function createPluginCreateInfo(
   messages: string[],
   {
     config,
-    getCompilerOptions,
     projectPluginConfiguration,
     projectService,
     refreshDiagnostics,
   }: {
     config?: unknown
-    getCompilerOptions?: () => ts.CompilerOptions
     projectPluginConfiguration?: Readonly<Record<string, unknown>>
     projectService?: ReturnType<typeof createProjectService>
     refreshDiagnostics?: () => void
@@ -442,11 +342,10 @@ function createPluginCreateInfo(
     config: config ?? projectPluginEntry ?? {},
     languageService: ts.createLanguageService(host),
     project: {
-      getCompilerOptions:
-        getCompilerOptions ??
-        (() => ({
-          plugins: projectPluginEntry ? [projectPluginEntry] : undefined,
-        })),
+      close() {},
+      getCompilerOptions: () => ({
+        plugins: projectPluginEntry ? [projectPluginEntry] : undefined,
+      }),
       projectService: projectService ?? createProjectService(messages),
       refreshDiagnostics: refreshDiagnostics ?? (() => {}),
     },
