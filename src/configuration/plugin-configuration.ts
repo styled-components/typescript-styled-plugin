@@ -59,6 +59,14 @@ export interface StyledPluginConfiguration {
   readonly validate: boolean
 }
 
+export interface StyledPluginEditorConfiguration {
+  readonly extraTags: ReadonlyArray<string>
+}
+
+export interface StyledPluginEditorConfigurationEnvelope {
+  readonly editorConfiguration: StyledPluginEditorConfiguration
+}
+
 /** Tag name whose template is a style fragment (`css`), a value-shaped one included. */
 export const CSS_TAG_NAME = 'css'
 

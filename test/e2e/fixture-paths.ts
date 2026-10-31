@@ -7,6 +7,7 @@ export const repositoryRoot = path.resolve(e2eRoot, '..', '..')
 export type FixtureProject =
   | 'closed-file-project-fixture'
   | 'default-tags-project-fixture'
+  | 'editor-configuration-project-fixture'
   | 'emmet-disabled-project-fixture'
   | 'plugin-missing-project-fixture'
   | 'styled-project-fixture'

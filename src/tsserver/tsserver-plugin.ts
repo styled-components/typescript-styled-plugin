@@ -1,5 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
+import { isDeepStrictEqual } from 'node:util'
+
 import { decorateWithTemplateLanguageService } from 'typescript-template-language-service-decorator'
 import type * as ts from 'typescript/lib/tsserverlibrary.js'
 
@@ -7,18 +9,36 @@ import { describeValue, PluginConfigurationManager } from '../configuration/plug
 import { StyledTemplateLanguageService } from '../template-language-service.ts'
 import { getTemplateSettings } from '../template-settings.ts'
 import { StyledVirtualDocumentProvider } from '../virtual-document/styled-virtual-document-provider.ts'
+import { EditorConfigurationManager, ProjectConfigurationManager } from './editor-configuration.ts'
+import { pluginPackageName } from './plugin-identity.ts'
 import { TsServerLogger } from './tsserver-logger.ts'
 
 export class TsServerStyledPlugin {
+  private editorConfiguration?: EditorConfigurationManager
   private logger?: TsServerLogger
-  private readonly configurationManager = new PluginConfigurationManager()
 
-  public constructor(private readonly typescript: typeof ts) {}
+  public constructor(
+    private readonly typescript: typeof ts,
+    private readonly getEditorConfiguration: (
+      info: ts.server.PluginCreateInfo,
+    ) => EditorConfigurationManager = () => new EditorConfigurationManager(),
+  ) {}
 
   public create(info: ts.server.PluginCreateInfo): ts.LanguageService {
     const logger = new TsServerLogger(info)
     this.logger = logger
-    this.applyConfiguration(info.config, logger)
+    const editorConfiguration = this.getEditorConfiguration(info)
+    this.editorConfiguration = editorConfiguration
+    const editorUpdate = editorConfiguration.updateFromPluginConfig(info.config, logger)
+    const configurationManager = new ProjectConfigurationManager(editorConfiguration, info.project)
+    const projectConfiguration = readProjectPluginConfiguration(info)
+    configurationManager.updateFromProjectConfig(projectConfiguration, logger)
+    if (!editorUpdate.matched && isLegacyConfigurationOverride(info.config, projectConfiguration)) {
+      const legacyConfiguration = new PluginConfigurationManager()
+      legacyConfiguration.updateFromPluginConfig(info.config, logger)
+      editorConfiguration.activateLegacy(legacyConfiguration.config, logger)
+    }
+    this.logConfigurationSummary(configurationManager, logger)
 
     if (!isSupportedTypeScriptVersion(this.typescript)) {
       logger.log(
@@ -34,7 +54,7 @@ export class TsServerStyledPlugin {
      */
     const templateLanguageService = new StyledTemplateLanguageService(
       this.typescript,
-      this.configurationManager,
+      configurationManager,
       new StyledVirtualDocumentProvider(this.typescript),
       logger,
     )
@@ -44,7 +64,7 @@ export class TsServerStyledPlugin {
       info.languageService,
       info.project,
       templateLanguageService,
-      getTemplateSettings(this.configurationManager),
+      getTemplateSettings(configurationManager),
       { logger },
     )
   }
@@ -52,13 +72,66 @@ export class TsServerStyledPlugin {
   public onConfigurationChanged(config: unknown) {
     const logger = this.logger
     logger?.log('onConfigurationChanged')
-    this.applyConfiguration(config, logger)
+    const editorUpdate = this.editorConfiguration?.updateFromPluginConfig(config, logger)
+    if (editorUpdate === undefined) {
+      return
+    }
+    if (!editorUpdate.matched) {
+      const legacyConfiguration = new PluginConfigurationManager()
+      legacyConfiguration.updateFromPluginConfig(config, logger)
+      this.editorConfiguration?.activateLegacy(legacyConfiguration.config, logger)
+    }
   }
 
-  private applyConfiguration(config: unknown, logger: TsServerLogger | undefined) {
-    this.configurationManager.updateFromPluginConfig(config, logger)
-    logger?.log('config: ' + describeValue(this.configurationManager.config))
+  private logConfigurationSummary(
+    manager: ProjectConfigurationManager,
+    logger: TsServerLogger,
+  ): void {
+    const { tags, validate } = manager.config
+    logger.log(
+      'config: ' +
+        describeValue({
+          tagCount: tags.length,
+          validate,
+        }),
+    )
   }
+}
+
+function readProjectPluginConfiguration(info: ts.server.PluginCreateInfo): unknown {
+  const plugins = info.project.getCompilerOptions().plugins
+  return Array.isArray(plugins) ? plugins.find(isStyledPluginConfiguration) : undefined
+}
+
+function isStyledPluginConfiguration(value: unknown): value is ts.PluginImport {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'name' in value &&
+    value.name === pluginPackageName
+  )
+}
+
+function isLegacyConfigurationOverride(config: unknown, projectConfiguration: unknown): boolean {
+  if (config === projectConfiguration) {
+    return false
+  }
+  if (projectConfiguration !== undefined) {
+    const runtime = new PluginConfigurationManager()
+    runtime.updateFromPluginConfig(config)
+    const project = new PluginConfigurationManager()
+    project.updateFromPluginConfig(projectConfiguration)
+    return !isDeepStrictEqual(runtime.config, project.config)
+  }
+  if (typeof config !== 'object' || config === null || Array.isArray(config)) {
+    return true
+  }
+  const keys = Object.keys(config)
+  return !(
+    keys.every((name) => name === 'global' || name === 'name') &&
+    'global' in config &&
+    config.global === true
+  )
 }
 
 /** The floor and the reason for it: docs/tsserver-host.md, "TypeScript versions". */

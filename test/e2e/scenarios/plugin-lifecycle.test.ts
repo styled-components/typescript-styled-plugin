@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import * as path from 'node:path'
+
 import type { server as tsserver } from 'typescript'
 import { assert, describe, it } from 'vitest'
 
@@ -91,6 +95,262 @@ describe.concurrent('Plugin lifecycle', () => {
     assert.isFalse(resetTags.success)
   })
 
+  it('should append and clear editor tags without replacing the project base', async (context) => {
+    const server = startServer(context, { project: 'editor-configuration-project-fixture' })
+    const source = mark(
+      'const base = projectTag`boarder: 0; color:⟨base⟩`; const extra = editorTag`boarder: 0; color:⟨extra⟩`',
+    )
+    const file = server.open(source.text)
+    const complete = (name: 'base' | 'extra') =>
+      server.request('completions', { file, ...source.at(name) })
+
+    const before = await complete('extra')
+    await server.configurePlugin(editorEnvelope(['editorTag', 'projectTag']))
+    const baseWithOverlay = await complete('base')
+    const extraWithOverlay = await complete('extra')
+    const diagnosticsWithOverlay = pluginDiagnostics(
+      await server.request('semanticDiagnosticsSync', { file }),
+    )
+    await server.configurePlugin(editorEnvelope([]))
+    const baseAfterClear = await complete('base')
+    const extraAfterClear = await complete('extra')
+
+    assert.isFalse(before.success)
+    assert.include(
+      bodyOf(baseWithOverlay).map(({ name }) => name),
+      'aliceblue',
+    )
+    assert.include(
+      bodyOf(extraWithOverlay).map(({ name }) => name),
+      'aliceblue',
+    )
+    assert.deepEqual(diagnosticsWithOverlay, [])
+    assert.include(
+      bodyOf(baseAfterClear).map(({ name }) => name),
+      'aliceblue',
+    )
+    assert.isFalse(extraAfterClear.success)
+  })
+
+  it('should refresh diagnostics only for effective runtime configuration changes', async (context) => {
+    const server = startServer(context)
+    const source = mark('const extra = editorTag`⟨property⟩boarder⟨/property⟩: 1px solid black;`')
+    const file = server.open(source.text)
+    assert.deepEqual(
+      pluginDiagnostics(await server.request('semanticDiagnosticsSync', { file })),
+      [],
+    )
+    server.takeProjectsUpdatedInBackgroundEvents()
+
+    const transitions = [
+      {
+        config: editorEnvelope([]),
+        diagnostic: false,
+        name: 'initial empty overlay',
+        refresh: false,
+      },
+      {
+        config: editorEnvelope(['styled']),
+        diagnostic: false,
+        name: 'base tag only',
+        refresh: false,
+      },
+      {
+        config: editorEnvelope(['editorTag']),
+        diagnostic: true,
+        name: 'append tag',
+        refresh: true,
+      },
+      {
+        config: editorEnvelope([' editorTag ', 'editorTag']),
+        diagnostic: true,
+        name: 'equivalent overlay',
+        refresh: false,
+      },
+      {
+        config: { editorConfiguration: { extraTags: 'invalid' } },
+        diagnostic: true,
+        name: 'non-array overlay',
+        refresh: false,
+      },
+      {
+        config: { editorConfiguration: { extraTags: [1, null, ' '] } },
+        diagnostic: true,
+        name: 'all-invalid entries',
+        refresh: false,
+      },
+      {
+        config: editorEnvelope(['', '   ']),
+        diagnostic: true,
+        name: 'blank entries',
+        refresh: false,
+      },
+      {
+        config: { tags: ['editorTag'], validate: false },
+        diagnostic: false,
+        name: 'legacy disables validation',
+        refresh: true,
+      },
+      {
+        config: { tags: ['editorTag'], validate: 'false' },
+        diagnostic: false,
+        name: 'equivalent legacy',
+        refresh: false,
+      },
+      {
+        config: { tags: ['editorTag'], validate: true },
+        diagnostic: true,
+        name: 'legacy enables validation',
+        refresh: true,
+      },
+      {
+        config: editorEnvelope([]),
+        diagnostic: false,
+        name: 'empty overlay restores base',
+        refresh: true,
+      },
+      {
+        config: editorEnvelope(['editorTag']),
+        diagnostic: true,
+        name: 'append again',
+        refresh: true,
+      },
+      { config: editorEnvelope([]), diagnostic: false, name: 'clear overlay', refresh: true },
+      {
+        config: editorEnvelope([]),
+        diagnostic: false,
+        name: 'already empty overlay',
+        refresh: false,
+      },
+    ]
+    for (const { config, diagnostic, name, refresh } of transitions) {
+      await server.configurePlugin(config)
+      assert.deepEqual(
+        server.takeProjectsUpdatedInBackgroundEvents().flatMap(({ body }) => body.openFiles),
+        refresh ? [file] : [],
+        name,
+      )
+      assert.deepEqual(
+        spansAndText(pluginDiagnostics(await server.request('semanticDiagnosticsSync', { file }))),
+        diagnostic ? [{ ...source.range('property'), text: "Unknown property: 'boarder'" }] : [],
+        name,
+      )
+    }
+  })
+
+  it('should keep the last valid overlay after a malformed editor envelope', async (context) => {
+    const server = startServer(context, { project: 'editor-configuration-project-fixture' })
+    const source = mark(
+      'const base = projectTag`color:⟨base⟩`; const extra = editorTag`color:⟨extra⟩`',
+    )
+    const file = server.open(source.text)
+    await server.configurePlugin(editorEnvelope(['editorTag']))
+
+    await server.configurePlugin({
+      editorConfiguration: {
+        extraTags: 'replacementTag',
+      },
+    })
+    const base = await server.request('completions', { file, ...source.at('base') })
+    const extra = await server.request('completions', { file, ...source.at('extra') })
+
+    assert.include(
+      bodyOf(base).map(({ name }) => name),
+      'aliceblue',
+    )
+    assert.include(
+      bodyOf(extra).map(({ name }) => name),
+      'aliceblue',
+    )
+    assert.include(server.readLog(), 'extraTags must be an array')
+  })
+
+  it('should apply editor tags sent before project creation and restore the project base', async (context) => {
+    const server = startServer(context, { project: 'editor-configuration-project-fixture' })
+    await server.configurePlugin(editorEnvelope(['editorTag']))
+    const source = mark(
+      'const base = projectTag`color:⟨base⟩`; const extra = editorTag`color:⟨extra⟩`',
+    )
+    const file = server.open(source.text)
+
+    const base = await server.request('completions', { file, ...source.at('base') })
+    const extra = await server.request('completions', { file, ...source.at('extra') })
+
+    assert.include(
+      bodyOf(base).map(({ name }) => name),
+      'aliceblue',
+    )
+    assert.include(
+      bodyOf(extra).map(({ name }) => name),
+      'aliceblue',
+    )
+  })
+
+  it('should preserve a legacy replacement sent before project creation', async (context) => {
+    const server = startServer(context, { project: 'editor-configuration-project-fixture' })
+    await server.configurePlugin({ tags: ['runtimeTag'], validate: true })
+    const source = mark(
+      'const project = projectTag`color:⟨project⟩`; const runtime = runtimeTag`color:⟨runtime⟩`',
+    )
+    const file = server.open(source.text)
+
+    const project = await server.request('completions', { file, ...source.at('project') })
+    const runtime = await server.request('completions', { file, ...source.at('runtime') })
+
+    assert.isFalse(project.success)
+    assert.include(
+      bodyOf(runtime).map(({ name }) => name),
+      'aliceblue',
+    )
+  })
+
+  it('should apply an empty legacy replacement sent before project creation', async (context) => {
+    const server = startServer(context, { project: 'editor-configuration-project-fixture' })
+    await server.configurePlugin({})
+    const source = mark(
+      'const project = projectTag`color:⟨project⟩`; const styledTemplate = styled.div`color:⟨styled⟩`',
+    )
+    const file = server.open(source.text)
+
+    const project = await server.request('completions', { file, ...source.at('project') })
+    const styled = await server.request('completions', { file, ...source.at('styled') })
+
+    assert.isFalse(project.success)
+    assert.include(
+      bodyOf(styled).map(({ name }) => name),
+      'aliceblue',
+    )
+  })
+
+  it('should let the last dynamic configuration kind replace the previous one', async (context) => {
+    const server = startServer(context, { project: 'editor-configuration-project-fixture' })
+    const source = mark(
+      'const project = projectTag`color:⟨project⟩`; const editor = editorTag`color:⟨editor⟩`; const runtime = runtimeTag`color:⟨runtime⟩`',
+    )
+    const file = server.open(source.text)
+    const complete = (name: 'editor' | 'project' | 'runtime') =>
+      server.request('completions', { file, ...source.at(name) })
+
+    await server.configurePlugin(editorEnvelope(['editorTag']))
+    assert.isTrue((await complete('editor')).success)
+
+    await server.configurePlugin({ tags: ['runtimeTag'], validate: true })
+    assert.isFalse((await complete('project')).success)
+    assert.isFalse((await complete('editor')).success)
+    assert.isTrue((await complete('runtime')).success)
+
+    await server.configurePlugin(editorEnvelope(['editorTag']))
+    assert.isTrue((await complete('project')).success)
+    assert.isTrue((await complete('editor')).success)
+    assert.isFalse((await complete('runtime')).success)
+
+    await server.configurePlugin({ tags: ['runtimeTag'], validate: true })
+    await server.configurePlugin(editorEnvelope([]))
+    assert.isTrue((await complete('project')).success)
+    assert.isFalse((await complete('editor')).success)
+    assert.isFalse((await complete('runtime')).success)
+  })
+
   it('should apply validation configuration changes to diagnostics and code fixes', async (context) => {
     const server = startServer(context)
     const source = mark('const q = css`⟨property⟩boarder⟨/property⟩: 1px solid black;`')
@@ -128,6 +388,292 @@ describe.concurrent('Plugin lifecycle', () => {
     assert.deepEqual(disabled, { diagnostics: [], fixes: [] })
     assert.deepEqual(reset, { diagnostics: expectedDiagnostics, fixes: expectedFixes })
   })
+
+  it('should replace editor tags and validation after a project reload', async (context) => {
+    const server = startServer(context)
+    const source = mark(
+      'const base = styled.div`color:⟨base⟩red;`; const extra = editorTag`⟨property⟩boarder⟨/property⟩: 0; color:⟨extra⟩red;`; const runtime = runtimeTag`color:⟨runtime⟩red;`',
+    )
+    const file = server.open(source.text)
+    const complete = (name: string) => server.request('completions', { file, ...source.at(name) })
+    await server.configurePlugin(editorEnvelope(['editorTag']))
+    assert.include(
+      bodyOf(await complete('extra')).map(({ name }) => name),
+      'aliceblue',
+    )
+    assert.deepEqual(
+      spansAndText(pluginDiagnostics(await server.request('semanticDiagnosticsSync', { file }))),
+      [{ ...source.range('property'), text: "Unknown property: 'boarder'" }],
+    )
+
+    server.notify('reloadProjects', undefined)
+    await complete('extra')
+    server.takeProjectsUpdatedInBackgroundEvents()
+    await server.configurePlugin({ tags: ['runtimeTag'], validate: false })
+
+    assert.deepEqual(
+      server.takeProjectsUpdatedInBackgroundEvents().flatMap(({ body }) => body.openFiles),
+      [file],
+    )
+    assert.include(
+      bodyOf(await complete('runtime')).map(({ name }) => name),
+      'aliceblue',
+    )
+    assert.isFalse((await complete('extra')).success)
+    assert.isFalse((await complete('base')).success)
+    assert.deepEqual(
+      pluginDiagnostics(await server.request('semanticDiagnosticsSync', { file })),
+      [],
+    )
+
+    await server.configurePlugin(editorEnvelope(['editorTag']))
+    assert.deepEqual(
+      server.takeProjectsUpdatedInBackgroundEvents().flatMap(({ body }) => body.openFiles),
+      [file],
+    )
+    assert.include(
+      bodyOf(await complete('extra')).map(({ name }) => name),
+      'aliceblue',
+    )
+  })
+
+  it('should isolate project tags, validation, lint, and Emmet in one server', async (context) => {
+    const server = startServer(context)
+    const source = mark(
+      'const base = styled.div`color:⟨base⟩`; const project = projectTag`color:⟨project⟩`; const extra = editorTag`⟨property⟩boarder⟨/property⟩: 0; color:⟨extra⟩`; const abbreviation = editorTag`m10-20⟨emmet⟩`',
+    )
+    const firstFile = server.open(source.text)
+    const secondFile = server.open(source.text, {
+      fileName: '../editor-configuration-project-fixture/main.ts',
+    })
+    const complete = (file: string, name: string) =>
+      server.request('completions', { file, ...source.at(name) })
+    await complete(secondFile, 'project')
+    server.takeProjectsUpdatedInBackgroundEvents()
+    await server.configurePlugin(editorEnvelope(['editorTag']))
+    assert.deepEqual(
+      server.takeProjectsUpdatedInBackgroundEvents().map(({ body }) => body.openFiles),
+      [[firstFile, secondFile]],
+    )
+
+    for (const file of [firstFile, secondFile]) {
+      assert.include(
+        bodyOf(await complete(file, 'extra')).map(({ name }) => name),
+        'aliceblue',
+      )
+    }
+    assert.include(
+      bodyOf(await complete(firstFile, 'base')).map(({ name }) => name),
+      'aliceblue',
+    )
+    assert.isFalse((await complete(firstFile, 'project')).success)
+    assert.include(
+      bodyOf(await complete(secondFile, 'project')).map(({ name }) => name),
+      'aliceblue',
+    )
+    assert.isFalse((await complete(secondFile, 'base')).success)
+    assert.include(
+      bodyOf(await complete(firstFile, 'emmet')).map(({ name }) => name),
+      'margin: 10px 20px;',
+    )
+    assert.notInclude(
+      bodyOf(await complete(secondFile, 'emmet')).map(({ name }) => name),
+      'margin: 10px 20px;',
+    )
+    assert.include(
+      pluginDiagnostics(await server.request('semanticDiagnosticsSync', { file: firstFile })).map(
+        ({ text }) => text,
+      ),
+      "Unknown property: 'boarder'",
+    )
+    assert.deepEqual(
+      pluginDiagnostics(await server.request('semanticDiagnosticsSync', { file: secondFile })),
+      [],
+    )
+
+    const lintSource = mark(
+      'const extra = editorTag`⟨property⟩boarder⟨/property⟩: 0; color:⟨extra⟩red;`',
+    )
+    const lintDirectory = mkdtempSync(path.join(tmpdir(), 'styled-editor-lint-'))
+    context.onTestFinished(() => rmSync(lintDirectory, { force: true, recursive: true }))
+    writeFileSync(
+      path.join(lintDirectory, 'tsconfig.json'),
+      JSON.stringify({
+        compilerOptions: {
+          plugins: [
+            { lint: { unknownProperties: 'ignore' }, name: '@styled/typescript-styled-plugin' },
+          ],
+        },
+        files: ['main.ts'],
+      }),
+    )
+    const lintFile = path.join(lintDirectory, 'main.ts')
+    server.notify('open', { file: lintFile, fileContent: lintSource.text })
+    assert.include(
+      bodyOf(
+        await server.request('completions', { file: lintFile, ...lintSource.at('extra') }),
+      ).map(({ name }) => name),
+      'aliceblue',
+    )
+    assert.deepEqual(
+      pluginDiagnostics(await server.request('semanticDiagnosticsSync', { file: lintFile })),
+      [],
+    )
+
+    server.takeProjectsUpdatedInBackgroundEvents()
+    await server.configurePlugin(editorEnvelope([]))
+    assert.deepEqual(
+      server.takeProjectsUpdatedInBackgroundEvents().map(({ body }) => body.openFiles),
+      [[firstFile, secondFile, lintFile]],
+    )
+    assert.include(
+      bodyOf(await complete(firstFile, 'base')).map(({ name }) => name),
+      'aliceblue',
+    )
+    assert.include(
+      bodyOf(await complete(secondFile, 'project')).map(({ name }) => name),
+      'aliceblue',
+    )
+    assert.isFalse((await complete(firstFile, 'extra')).success)
+    assert.isFalse((await complete(secondFile, 'extra')).success)
+    await server.close()
+  })
+
+  it('should keep configuration current when external projects close and reopen', async (context) => {
+    const directory = mkdtempSync(path.join(tmpdir(), 'styled-editor-close-'))
+    context.onTestFinished(() => rmSync(directory, { force: true, recursive: true }))
+    const server = startServer(context, { globalPlugins: true })
+    const source = mark(
+      'const base = styled.div`color:⟨base⟩red;`; const extra = editorTag`color:⟨extra⟩red;`; const next = nextTag`color:⟨next⟩red;`',
+    )
+    const projects = ['first', 'second'].map((name) => {
+      const file = path.join(directory, `${name}.ts`)
+      writeFileSync(file, source.text)
+      return {
+        file,
+        options: {},
+        projectFileName: path.join(directory, `${name}.project`),
+        rootFiles: [{ fileName: file }],
+      }
+    })
+    const complete = (file: string, name: string) =>
+      server.request('completions', { file, ...source.at(name) })
+    for (const project of projects) {
+      assert.isTrue((await server.request('openExternalProject', project)).success)
+      assert.include(
+        bodyOf(await complete(project.file, 'base')).map(({ name }) => name),
+        'aliceblue',
+      )
+      assert.isFalse((await complete(project.file, 'extra')).success)
+    }
+
+    await server.configurePlugin(editorEnvelope(['editorTag']))
+    for (const project of projects) {
+      assert.include(
+        bodyOf(await complete(project.file, 'extra')).map(({ name }) => name),
+        'aliceblue',
+      )
+    }
+
+    assert.isTrue(
+      (
+        await server.request('closeExternalProject', {
+          projectFileName: projects[0].projectFileName,
+        })
+      ).success,
+    )
+    await server.configurePlugin(editorEnvelope(['nextTag']))
+    assert.include(
+      bodyOf(await complete(projects[1].file, 'next')).map(({ name }) => name),
+      'aliceblue',
+    )
+    assert.isFalse((await complete(projects[1].file, 'extra')).success)
+
+    assert.isTrue(
+      (
+        await server.request('closeExternalProject', {
+          projectFileName: projects[1].projectFileName,
+        })
+      ).success,
+    )
+    await server.configurePlugin(editorEnvelope(['editorTag']))
+    assert.isTrue((await server.request('openExternalProject', projects[0])).success)
+    assert.include(
+      bodyOf(await complete(projects[0].file, 'extra')).map(({ name }) => name),
+      'aliceblue',
+    )
+    assert.isFalse((await complete(projects[0].file, 'next')).success)
+  })
+
+  it('should replay an editor overlay in a fresh server before opening a project', async (context) => {
+    const source = mark(
+      'const base = projectTag`color:⟨base⟩`; const extra = editorTag`color:⟨extra⟩`',
+    )
+    const results: tsserver.protocol.CompletionEntry[][][] = []
+    for (let session = 0; session < 2; session++) {
+      const server = startServer(context, { project: 'editor-configuration-project-fixture' })
+      if (session === 1) {
+        await server.configurePlugin(editorEnvelope(['editorTag']))
+      }
+      const file = server.open(source.text)
+      if (session === 0) {
+        await server.configurePlugin(editorEnvelope(['editorTag']))
+      }
+      const completions = []
+      for (const name of ['base', 'extra']) {
+        const entries = bodyOf(await server.request('completions', { file, ...source.at(name) }))
+        assert.include(
+          entries.map(({ name }) => name),
+          'aliceblue',
+        )
+        completions.push(entries)
+      }
+      results.push(completions)
+      await server.close()
+    }
+    assert.deepEqual(results[1], results[0])
+  })
+
+  it.for(['configured', 'inferred'] as const)(
+    'should load a global plugin with pre-create editor tags in a %s project',
+    async (kind, context) => {
+      const directory = mkdtempSync(path.join(tmpdir(), 'styled-global-editor-'))
+      context.onTestFinished(() => rmSync(directory, { force: true, recursive: true }))
+      if (kind === 'configured') {
+        writeFileSync(
+          path.join(directory, 'tsconfig.json'),
+          '{"compilerOptions":{},"files":["main.ts"]}',
+        )
+      }
+      const server = startServer(context, { globalPlugins: true })
+      await server.configurePlugin(editorEnvelope(['editorTag']))
+      const source = mark(
+        'const base = styled.div`color:⟨base⟩red;`; const extra = editorTag`⟨property⟩boarder⟨/property⟩: 0; color:⟨extra⟩red;`',
+      )
+      const file = path.join(directory, 'main.ts')
+      server.notify('open', { file, fileContent: source.text })
+      for (const name of ['base', 'extra']) {
+        assert.include(
+          bodyOf(await server.request('completions', { file, ...source.at(name) })).map(
+            ({ name }) => name,
+          ),
+          'aliceblue',
+        )
+      }
+      assert.deepEqual(
+        spansAndText(pluginDiagnostics(await server.request('semanticDiagnosticsSync', { file }))),
+        [{ ...source.range('property'), text: "Unknown property: 'boarder'" }],
+      )
+      await server.configurePlugin(editorEnvelope([]))
+      assert.include(
+        bodyOf(await server.request('completions', { file, ...source.at('base') })).map(
+          ({ name }) => name,
+        ),
+        'aliceblue',
+      )
+      assert.isFalse((await server.request('completions', { file, ...source.at('extra') })).success)
+    },
+  )
 
   it.for([
     [
@@ -247,3 +793,11 @@ describe.concurrent('Plugin lifecycle', () => {
     )
   })
 })
+
+function editorEnvelope(extraTags: ReadonlyArray<string>): unknown {
+  return {
+    editorConfiguration: {
+      extraTags,
+    },
+  }
+}

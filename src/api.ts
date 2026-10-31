@@ -11,6 +11,8 @@ export {
 export type {
   StyledPluginConfiguration,
   StyledPluginConfigurationInput,
+  StyledPluginEditorConfiguration,
+  StyledPluginEditorConfigurationEnvelope,
   StyledPluginEmmetConfiguration,
   StyledPluginLintConfiguration,
   StyledPluginLintLevel,

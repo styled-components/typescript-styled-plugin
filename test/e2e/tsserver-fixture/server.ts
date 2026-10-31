@@ -23,6 +23,10 @@ const TSSERVER_HEAP_CAP_MB = 1024
 
 /** Requests the scenarios send, each paired with the response tsserver's protocol declares for it. */
 interface RequestTypes {
+  closeExternalProject: {
+    request: server.protocol.CloseExternalProjectRequest
+    response: server.protocol.CloseExternalProjectResponse
+  }
   completionEntryDetails: {
     request: server.protocol.CompletionDetailsRequest
     response: server.protocol.CompletionDetailsResponse
@@ -47,6 +51,10 @@ interface RequestTypes {
     request: server.protocol.OutliningSpansRequest
     response: server.protocol.OutliningSpansResponse
   }
+  openExternalProject: {
+    request: server.protocol.OpenExternalProjectRequest
+    response: server.protocol.OpenExternalProjectResponse
+  }
   quickinfo: {
     request: server.protocol.QuickInfoRequest
     response: server.protocol.QuickInfoResponse
@@ -61,6 +69,7 @@ interface RequestTypes {
 interface NotificationTypes {
   change: server.protocol.ChangeRequest
   open: server.protocol.OpenRequest
+  reloadProjects: server.protocol.ReloadProjectsRequest
 }
 
 export type RequestCommand = keyof RequestTypes
@@ -70,6 +79,7 @@ export type ResponseTo<Command extends RequestCommand> = RequestTypes[Command]['
 type NotificationCommand = keyof NotificationTypes
 
 export interface TSServerOptions {
+  globalPlugins?: boolean
   project?: FixtureProject
   /** An alias from test/e2e/package.json; defaults to `TSSERVER_TYPESCRIPT_PACKAGE`, then `typescript`. */
   typescriptPackage?: string
@@ -94,11 +104,17 @@ export class TSServer {
   private readonly notifications = new Set<number>()
   private readonly pending = new Map<number, PendingRequest>()
   private readonly process: ChildProcessWithoutNullStreams
+  private readonly projectsUpdatedInBackgroundEvents: server.protocol.ProjectsUpdatedInBackgroundEvent[] =
+    []
   private sequence = 0
   public readonly logFile: string
   public readonly project: FixtureProject
 
-  constructor({ project = 'styled-project-fixture', typescriptPackage }: TSServerOptions = {}) {
+  constructor({
+    globalPlugins = false,
+    project = 'styled-project-fixture',
+    typescriptPackage,
+  }: TSServerOptions = {}) {
     this.project = project
     const runId = process.env.TSSERVER_FIXTURE_RUN_ID
     if (runId === undefined) {
@@ -123,6 +139,7 @@ export class TSServer {
         this.logFile,
         '--pluginProbeLocations',
         e2eRoot,
+        ...(globalPlugins ? ['--globalPlugins', pluginPackageName] : []),
       ],
       { cwd: path.join(e2eRoot, project), stdio: 'pipe' },
     )
@@ -213,6 +230,10 @@ export class TSServer {
     }
   }
 
+  takeProjectsUpdatedInBackgroundEvents(): server.protocol.ProjectsUpdatedInBackgroundEvent[] {
+    return this.projectsUpdatedInBackgroundEvents.splice(0)
+  }
+
   /** Ends tsserver's input and waits for it to exit; rejects on any failure the session saw. */
   close(): Promise<void> {
     this.closePromise ??= this.shutDown()
@@ -281,6 +302,10 @@ export class TSServer {
       )
       return
     }
+    if (isProjectsUpdatedInBackgroundEvent(message)) {
+      this.projectsUpdatedInBackgroundEvents.push(message)
+      return
+    }
     if (isEvent(message)) {
       return
     }
@@ -337,10 +362,21 @@ export class TSServer {
   }
 }
 
-function isEvent(message: unknown): boolean {
+function isEvent(message: unknown): message is server.protocol.Event {
   return (
-    typeof message === 'object' && message !== null && 'type' in message && message.type === 'event'
+    typeof message === 'object' &&
+    message !== null &&
+    'type' in message &&
+    message.type === 'event' &&
+    'event' in message &&
+    typeof message.event === 'string'
   )
+}
+
+function isProjectsUpdatedInBackgroundEvent(
+  message: unknown,
+): message is server.protocol.ProjectsUpdatedInBackgroundEvent {
+  return isEvent(message) && message.event === 'projectsUpdatedInBackground'
 }
 
 function isResponse(message: unknown): message is server.protocol.Response {
