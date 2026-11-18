@@ -57,6 +57,34 @@ describe('Errors', () => {
     assert.deepEqual(spansAndText(diagnostics), [unknownProperty(marked, 'boarder')])
   })
 
+  it('should report an unknown property inside a keyframes block', async () => {
+    const { diagnostics, marked } = await diagnose(
+      [
+        'declare const keyframes: any, styled: any, css: any, createGlobalStyle: any, injectGlobal: any',
+        'const animation = keyframes`',
+        '  0% { ⟨percent⟩opacitty⟨/percent⟩: 0; }',
+        '  from { ⟨from⟩opacitty⟨/from⟩: 0; }',
+        '  to { opacity: 1; }',
+        '`',
+        'const Box = styled.div`',
+        '  @keyframes fade { 100% { ⟨styled⟩opacitty⟨/styled⟩: 0; } }',
+        '`',
+        'const fragment = css`@keyframes fade { from { ⟨cssName⟩opacitty⟨/cssName⟩: 0; } }`',
+        'const Global = createGlobalStyle`@keyframes fade { to { ⟨global⟩opacitty⟨/global⟩: 0; } }`',
+        'const injected = injectGlobal`@keyframes fade { 50% { ⟨inject⟩opacitty⟨/inject⟩: 0; } }`',
+      ].join('\n'),
+    )
+
+    assert.deepEqual(spansAndText(diagnostics), [
+      unknownProperty(marked, 'opacitty', 'percent'),
+      unknownProperty(marked, 'opacitty', 'from'),
+      unknownProperty(marked, 'opacitty', 'styled'),
+      unknownProperty(marked, 'opacitty', 'cssName'),
+      unknownProperty(marked, 'opacitty', 'global'),
+      unknownProperty(marked, 'opacitty', 'inject'),
+    ])
+  })
+
   it.each([
     ['an unclosed placeholder after a property', 'const q = css`color: ${'],
     ['an unclosed placeholder at the template start', 'const q = css`${value'],
@@ -735,7 +763,9 @@ describe('Errors', () => {
       [
         'const Frames = keyframes`',
         '  ${a}% { opacity: 0; }',
-        '  to { opacity: 1; }',
+        '  from { ${prop}: 0; }',
+        '  0% { ${mixin} }',
+        '  to { -webkit-transform: scale(1); opacity: 1; }',
         '`',
         'const Lists = styled.div`',
         '  ${Child}:hover,',
@@ -773,7 +803,7 @@ describe('Errors', () => {
   ])('should report no false error for %s', async (_description, templateLines) => {
     const { diagnostics, marked } = await diagnose(
       [
-        'declare const styled: any, keyframes: any, side: any, query: any, a: any, b: any, cls: any, Child: any, mixin: any',
+        'declare const styled: any, keyframes: any, side: any, query: any, a: any, b: any, cls: any, Child: any, mixin: any, prop: any',
         ...templateLines,
         ...controlLines,
       ].join('\n'),
