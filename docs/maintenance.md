@@ -147,11 +147,15 @@ compare the two runs directly, rather than against a number in this document.
 `yarn test:scaling` (`test/performance/scaling-check.ts`, wired into `yarn
 verify` and CI) times each hot operation (substitution, diagnostics, folding,
 hover, completions, code fixes) at N and 4N, alternating the two sizes and
-taking the minimum of several runs per size, and fails when time(4N)/time(N)
+taking the minimum of several samples per size, and fails when time(4N)/time(N)
 exceeds the threshold defined in that file. Each timing is the CPU time of the
 thread running the check (`process.threadCpuUsage`), so time spent preempted by
 other processes never counts; the script needs the development Node version for
-that API. A
+that API. A sample repeats the operation back to back until it spans the sample
+floor defined in that file (the repetition count is calibrated once per check
+at N and reused at 4N, and the printed time is per run), so a coarse CPU clock
+(whole milliseconds on GitHub's ubuntu runners) rounds by a few percent of any
+sample, whatever the check's cost. A
 linear operation lands near 4; a quadratic one lands near 16;
 the threshold sits between the two. Every timed result is also checked against
 what its fixture must produce (a diagnostic per misspelled property, a fold
