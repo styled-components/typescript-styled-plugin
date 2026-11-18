@@ -97,8 +97,11 @@ request with no answer within `TSSERVER_RESPONSE_TIMEOUT_MS`
 (`test/e2e/tsserver-fixture/timeouts.ts`) fails its test and stops that
 tsserver at once, and each tsserver runs with a heap cap
 (`test/e2e/tsserver-fixture/server.ts`); each unit test worker runs with a heap
-cap (`vitest.config.ts`). Vitest's own `testTimeout` cannot stop a test stuck
-in a synchronous loop, since its timer runs on the same blocked thread, so
+cap (`vitest.config.ts`). The e2e hook timeout leaves enough headroom for the
+harness to report a process-exit timeout from an `onTestFinished` cleanup
+before Vitest's generic hook timeout. Vitest's own `testTimeout` cannot stop a
+test stuck in a synchronous loop, since its timer runs on the same blocked
+thread, so
 `yarn test:unit` and `yarn test:e2e:run` each run through
 `scripts/with-deadline.ts` instead of calling Vitest directly (the deadline
 each passes it is set where package.json invokes the wrapper). The wrapper
