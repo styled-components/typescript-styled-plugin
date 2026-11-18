@@ -404,7 +404,15 @@ function buildStringAndCodeMultilinePlaceholderCase(count: number): TextCase {
 interface TextCheckCase {
   readonly build: (count: number) => TextCase
   readonly label: string
+  readonly n?: number
 }
+
+/**
+ * For the cheapest-per-character cases. At SUBSTITUTION_CHECK_N their 4N text outgrows a CPU cache
+ * on GitHub's runners that its N text fits, so a linear operation reads near 6 there (near 4
+ * locally, flat per character from 1,500 to 384,000 units). At this size both texts are past it.
+ */
+const CACHE_BOUND_TEXT_CHECK_N = 24_000
 
 /** Each case is timed through getTemplateSubstitutions with its text and spans. */
 const substitutionCases: readonly TextCheckCase[] = [
@@ -461,6 +469,7 @@ const substitutionCases: readonly TextCheckCase[] = [
     build: (count) =>
       repeatUnit({ count, expectedUnit: 'xxxxxx ', prefix: '/* ', suffix: '*/', unit: '${aaa} ' }),
     label: 'placeholders inside one block comment',
+    n: CACHE_BOUND_TEXT_CHECK_N,
   },
   /**
    * Every placeholder's name scan reaches the same name end, which must be found once, not once
@@ -565,6 +574,7 @@ const substitutionCases: readonly TextCheckCase[] = [
     build: (count) =>
       repeatUnit({ count, expectedUnit: 'xxxxxx;/*', prefix: '/*', unit: '${aaa};/*' }),
     label: 'statements each opening an unterminated comment',
+    n: CACHE_BOUND_TEXT_CHECK_N,
   },
   /** Out-of-order spans take normalizeSpans' copy-and-sort path, which must stay near-linear. */
   {
@@ -628,10 +638,11 @@ function defineTextCheck(
   name: string,
   build: (count: number) => TextCase,
   transform: (textCase: TextCase) => string,
+  n = SUBSTITUTION_CHECK_N,
 ): ScalingCheck {
   const caseForSize = cachedBySize(build)
   return defineCheck({
-    n: SUBSTITUTION_CHECK_N,
+    n,
     name,
     run: (size) => transform(caseForSize(size)),
     verify: (result, size) => compareText(caseForSize(size).expected, result),
@@ -888,9 +899,12 @@ const manyTemplateContextsForSize = cachedBySize((size) =>
 )
 
 const checks: readonly ScalingCheck[] = [
-  ...substitutionCases.map(({ build, label }) =>
-    defineTextCheck(`substitution (${label})`, build, ({ spans, text }) =>
-      getTemplateSubstitutions(text, spans),
+  ...substitutionCases.map(({ build, label, n }) =>
+    defineTextCheck(
+      `substitution (${label})`,
+      build,
+      ({ spans, text }) => getTemplateSubstitutions(text, spans),
+      n,
     ),
   ),
   ...escapeCases.map(({ build, label }) =>
