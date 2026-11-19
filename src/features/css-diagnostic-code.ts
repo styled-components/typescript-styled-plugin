@@ -3,6 +3,15 @@ export const CSS_DIAGNOSTIC_CODE = 9999
 /** vscode-css-languageservice's stable lint-rule id for an empty ruleset. */
 export const EMPTY_RULESET_DIAGNOSTIC_CODE = 'emptyRules'
 
+/** vscode-css-languageservice's stable lint-rule id for an unknown property (`Rules.UnknownProperty`). */
+export const UNKNOWN_PROPERTY_DIAGNOSTIC_CODE = 'unknownProperties'
+
+/**
+ * vscode-css-languageservice's stable lint-rule id for an unknown vendor-prefixed property
+ * (`Rules.UnknownVendorSpecificProperty`). Its message is "Unknown vendor specific property."
+ */
+export const UNKNOWN_VENDOR_SPECIFIC_PROPERTY_DIAGNOSTIC_CODE = 'unknownVendorSpecificProperties'
+
 /**
  * vscode-css-languageservice's stable parse-error id for "at-rule or selector expected"
  * (ParseError.RuleOrSelectorExpected, cssErrors.ts). At the template end it reports the wrapper's

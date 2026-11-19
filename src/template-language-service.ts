@@ -205,6 +205,10 @@ export class StyledTemplateLanguageService implements TemplateLanguageService {
       this.virtualDocumentSessionProvider,
       this.scssLanguageService,
       () => this.configurationManager.config.validate,
+      Object.getPrototypeOf(this.languageServiceFactory) ===
+        DefaultStylesLanguageServiceFactory.prototype
+        ? () => this.configurationManager.config.lint
+        : undefined,
     )
     return this.diagnosticsFeature
   }
