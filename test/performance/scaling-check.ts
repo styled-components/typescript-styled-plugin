@@ -43,6 +43,7 @@ import {
   createFoldingTemplate,
   createLargeTemplate,
   createTemplateContext,
+  createTemplateContextFactory,
   createTemplateLanguageService,
   requireGc,
   settleHeap,
@@ -51,12 +52,15 @@ import {
 
 /**
  * Guardrail against superlinear regressions in a hot operation. Times each check at N and 4N,
- * taking the minimum positive sample from RUNS_PER_SIZE runs per size to filter scheduler, GC, and
- * coarse-clock noise, then fails when time(4N)/time(N) exceeds SCALING_THRESHOLD. At 4x the input a
- * linear operation's ratio lands near 4 (its fixed per-call cost pulls it lower) and a quadratic
- * one's near 16. Every check's N is sized so a quadratic regression injected into its path lands at
- * 10 or more (SUBSTITUTION_CHECK_N and the sizes after it), so 7 gives a linear operation's noisy
- * readings 75% headroom above 4 while staying clearly under where a real regression lands.
+ * taking the minimum positive sample from RUNS_PER_SIZE samples per size to filter scheduler and GC
+ * noise, then fails when time(4N)/time(N) exceeds SCALING_THRESHOLD. A sample repeats the operation
+ * until it spans SAMPLE_FLOOR_MS of CPU time (the repetition count is calibrated once per check at
+ * N, until the smaller of two samples reaches the floor, and reused at 4N) and reports the per-run
+ * time, so a coarse CPU clock tick is a few percent of any sample whatever the check's cost. At 4x
+ * the input a linear operation's ratio lands near 4 (its fixed per-call cost pulls it lower) and a
+ * quadratic one's near 16. Each check's N is sized so a quadratic regression injected into its path
+ * lands clearly above 7 (SUBSTITUTION_CHECK_N and the sizes after it); a quadratic term too light
+ * to dominate at 4N reads lower. 7 gives a linear operation's noisy readings 75% headroom above 4.
  */
 const SCALING_THRESHOLD = 7
 /**
@@ -69,6 +73,10 @@ const SCALING_THRESHOLD = 7
  */
 const MIN_PLAUSIBLE_RATIO = 1.5
 const RUNS_PER_SIZE = 5
+/** One clock tick (1ms on the coarsest host) is at most 5% of a sample this long. */
+const SAMPLE_FLOOR_MS = 20
+/** Stops calibration on an operation too cheap, or a clock too coarse, for the floor to ever be reached. */
+const MAX_REPETITIONS = 1 << 16
 /**
  * How many times a check whose ratio lands above SCALING_THRESHOLD or below MIN_PLAUSIBLE_RATIO is
  * measured again before it fails. Heavy machine load inflates one attempt's timings unevenly,
@@ -129,12 +137,17 @@ interface ScalingCheckDefinition<Result> {
 }
 
 interface Measurement {
+  /** CPU time of one run: the sample divided by its repetitions. */
   readonly elapsedMs: number
+  /** Verification of the sample's last result. */
   readonly mismatch: ResultMismatch | undefined
+  /** CPU time of the whole sample. */
+  readonly sampleMs: number
 }
 
 interface ScalingCheck {
-  measure(size: number): Measurement
+  /** Runs the operation `repetitions` times back to back at `size`; every run gets a new service and a new TemplateContext (only the fixture's text, spans, and parsed source file are shared across runs). */
+  measure(size: number, repetitions: number): Measurement
   readonly n: number
   readonly name: string
 }
@@ -164,6 +177,11 @@ interface CheckResult {
  * uninterrupted while a 4N sample several times longer almost never does, so the minimum positive
  * sample over several wall-clock readings inflates only the 4N side and pushes a linear operation past
  * SCALING_THRESHOLD. Time spent preempted never counts as CPU time.
+ *
+ * Some hosts (GitHub's ubuntu runners) read this clock in whole-millisecond ticks, so a sample
+ * shorter than a few ticks rounds by a large share of itself. A sample therefore repeats the
+ * operation back to back until it spans SAMPLE_FLOOR_MS, which caps one tick's error at a few
+ * percent for every check regardless of its size.
  */
 function elapsedCpuMs(start: NodeJS.CpuUsage): number {
   const elapsed = process.threadCpuUsage(start)
@@ -172,11 +190,18 @@ function elapsedCpuMs(start: NodeJS.CpuUsage): number {
 
 function defineCheck<Result>(definition: ScalingCheckDefinition<Result>): ScalingCheck {
   return {
-    measure(size) {
+    measure(size, repetitions) {
       const start = process.threadCpuUsage()
-      const result = definition.run(size)
-      const elapsedMs = elapsedCpuMs(start)
-      return { elapsedMs, mismatch: definition.verify(result, size) }
+      let result = definition.run(size)
+      for (let repetition = 1; repetition < repetitions; repetition++) {
+        result = definition.run(size)
+      }
+      const sampleMs = elapsedCpuMs(start)
+      return {
+        elapsedMs: sampleMs / repetitions,
+        mismatch: definition.verify(result, size),
+        sampleMs,
+      }
     },
     n: definition.n,
     name: definition.name,
@@ -255,16 +280,16 @@ function compareOneDiagnosticEach(
 
 /**
  * Caches one input per distinct size, so a hot operation's timed run pays only its own cost, never
- * the cost of building its fixture: building a fixture (ts.createSourceFile's parse inside
- * createTemplateContext, a long string and its span list) is itself linear in size and allocates
- * enough to trigger collections, and left inside the timed region it both dilutes a superlinear
- * regression enough to land under SCALING_THRESHOLD and adds collection noise to one side of the
- * ratio. runTimedCheck's warmup measures every check once at each size before timing it, which
- * pays the one build per size; every timed call after that is a cache hit here. Each language
- * feature check still constructs a fresh StyledTemplateLanguageService per run() call, which is
- * where RawValidationCache and every other per-request cache live (docs/architecture.md, Caching),
- * so reusing the same TemplateContext object across calls changes nothing about what the timed
- * operation itself has to do.
+ * the cost of building its fixture: building a fixture (a long string and its span list, or the
+ * parse inside createTemplateContextFactory) is itself linear in size and allocates enough to
+ * trigger collections, and left inside the timed region it both dilutes a superlinear regression
+ * enough to land under SCALING_THRESHOLD and adds collection noise to one side of the ratio.
+ * runTimedCheck's warmup measures every check once at each size before timing it, which pays the
+ * one build per size; every timed call after that is a cache hit here. A cached TemplateContext
+ * would also carry the plugin's per-context memos (the line map, the escape-replaced text, the
+ * substituted text) from one run into the next, so a timed run would never pay for building them;
+ * a TemplateContext is therefore cached only as a factory (freshContextForSize), never as an
+ * object.
  */
 function cachedBySize<Input>(build: (size: number) => Input): (size: number) => Input {
   const cache = new Map<number, Input>()
@@ -279,10 +304,22 @@ function cachedBySize<Input>(build: (size: number) => Input): (size: number) => 
   }
 }
 
+/**
+ * Builds each size's context factory once (the parse of the fixture's source file) and calls it on
+ * every use, so each call returns a new TemplateContext with empty per-context memos, the way
+ * tsserver brings a new context per request.
+ */
+function freshContextForSize(
+  buildFactory: (size: number) => () => TemplateContext,
+): (size: number) => TemplateContext {
+  const factoryForSize = cachedBySize(buildFactory)
+  return (size) => factoryForSize(size)()
+}
+
 function contextForSize(
   buildTemplate: (size: number) => string,
 ): (size: number) => TemplateContext {
-  return cachedBySize((size) => createTemplateContext(buildTemplate(size)))
+  return freshContextForSize((size) => createTemplateContextFactory(buildTemplate(size)))
 }
 
 interface TextCase {
@@ -383,8 +420,13 @@ interface TextCheckCase {
   readonly n?: number
 }
 
-/** For cases whose N=6,000 run takes about one CPU clock tick, where CI quantization (0.000ms or 1.000ms) distorts the ratio. */
-const COARSE_CLOCK_TEXT_CHECK_N = 24_000
+/**
+ * For the cheapest-per-character cases. On GitHub's runners these two cases' per-character cost
+ * steps up between 6,000 and 24,000 units, so a linear operation reads 5.9 to 6.5 at
+ * SUBSTITUTION_CHECK_N. At 24,000 both sizes are past the step. The cause of the step is
+ * unconfirmed.
+ */
+const CACHE_BOUND_TEXT_CHECK_N = 24_000
 
 /** Each case is timed through getTemplateSubstitutions with its text and spans. */
 const substitutionCases: readonly TextCheckCase[] = [
@@ -441,7 +483,7 @@ const substitutionCases: readonly TextCheckCase[] = [
     build: (count) =>
       repeatUnit({ count, expectedUnit: 'xxxxxx ', prefix: '/* ', suffix: '*/', unit: '${aaa} ' }),
     label: 'placeholders inside one block comment',
-    n: COARSE_CLOCK_TEXT_CHECK_N,
+    n: CACHE_BOUND_TEXT_CHECK_N,
   },
   /**
    * Every placeholder's name scan reaches the same name end, which must be found once, not once
@@ -451,7 +493,6 @@ const substitutionCases: readonly TextCheckCase[] = [
     build: (count) =>
       repeatUnit({ count, expectedUnit: '#{x  }', suffix: '-x: 1px;', unit: PLACEHOLDER }),
     label: 'adjacent placeholders joined into one property name',
-    n: COARSE_CLOCK_TEXT_CHECK_N,
   },
   /** Each condition looks back over one word, never to the at-keyword, and becomes "(x   )". */
   {
@@ -547,7 +588,7 @@ const substitutionCases: readonly TextCheckCase[] = [
     build: (count) =>
       repeatUnit({ count, expectedUnit: 'xxxxxx;/*', prefix: '/*', unit: '${aaa};/*' }),
     label: 'statements each opening an unterminated comment',
-    n: COARSE_CLOCK_TEXT_CHECK_N,
+    n: CACHE_BOUND_TEXT_CHECK_N,
   },
   /** Out-of-order spans take normalizeSpans' copy-and-sort path, which must stay near-linear. */
   {
@@ -593,7 +634,6 @@ const escapeCases: readonly TextCheckCase[] = [
       text: 'a\\x62'.repeat(count),
     }),
     label: 'escape runs inside one name',
-    n: COARSE_CLOCK_TEXT_CHECK_N,
   },
 ]
 
@@ -612,7 +652,7 @@ function defineTextCheck(
   name: string,
   build: (count: number) => TextCase,
   transform: (textCase: TextCase) => string,
-  n: number = SUBSTITUTION_CHECK_N,
+  n = SUBSTITUTION_CHECK_N,
 ): ScalingCheck {
   const caseForSize = cachedBySize(build)
   return defineCheck({
@@ -676,13 +716,13 @@ function createLayerDiagnosticsTemplate(layerCount: number): string {
   ).join('\n')
 }
 
-function createInterpolatedEmptyRulesContext(rulePairCount: number): TemplateContext {
+function createInterpolatedEmptyRulesContextFactory(rulePairCount: number): () => TemplateContext {
   const placeholder = '${mixin}'
   const text = Array.from(
     { length: rulePairCount },
     (_, index) => `.interpolated-${index} { ${placeholder} }\n.empty-${index} {}`,
   ).join('\n')
-  return createTemplateContext(
+  return createTemplateContextFactory(
     text,
     offsetsOf(text, placeholder).map((start) => ({
       end: start + placeholder.length,
@@ -694,7 +734,9 @@ function createInterpolatedEmptyRulesContext(rulePairCount: number): TemplateCon
 const MISSPELLED_PROPERTY = 'colr'
 const diagnosticsContextForSize = contextForSize(createDiagnosticsTemplate)
 const foldingContextForSize = contextForSize(createFoldingTemplate)
-const interpolatedEmptyRulesContextForSize = cachedBySize(createInterpolatedEmptyRulesContext)
+const interpolatedEmptyRulesContextForSize = freshContextForSize(
+  createInterpolatedEmptyRulesContextFactory,
+)
 
 interface DiagnosticsCheckCase {
   readonly context: (size: number) => TemplateContext
@@ -850,9 +892,9 @@ function createManyMultilinePlaceholdersTemplate(ruleCount: number): {
   }
 }
 
-const manyMultilinePlaceholdersContextForSize = cachedBySize((size) => {
+const manyMultilinePlaceholdersContextForSize = freshContextForSize((size) => {
   const { spans, text } = createManyMultilinePlaceholdersTemplate(size)
-  return createTemplateContext(text, spans)
+  return createTemplateContextFactory(text, spans)
 })
 
 /** Inside the first rule's selector `.rule-0` of a diagnostics template. */
@@ -866,11 +908,16 @@ function firstMisspelledPropertySpan(size: number): TemplateSpan {
   return { end: start + MISSPELLED_PROPERTY.length, start }
 }
 
-const manyTemplateContextsForSize = cachedBySize((size) =>
+const manyTemplateContextFactoriesForSize = cachedBySize((size) =>
   Array.from({ length: size }, (_, index) =>
-    createTemplateContext(`.rule-${index} { colr: red; margin: 0; }`),
+    createTemplateContextFactory(`.rule-${index} { colr: red; margin: 0; }`),
   ),
 )
+
+/** One new context per template, as a file's templates each get in a request. */
+function manyTemplateContextsForSize(size: number): TemplateContext[] {
+  return manyTemplateContextFactoriesForSize(size).map((factory) => factory())
+}
 
 const checks: readonly ScalingCheck[] = [
   ...substitutionCases.map(({ build, label, n }) =>
@@ -881,12 +928,9 @@ const checks: readonly ScalingCheck[] = [
       n,
     ),
   ),
-  ...escapeCases.map(({ build, label, n }) =>
-    defineTextCheck(
-      `JavaScript escape replacement (${label})`,
-      build,
-      ({ text }) => replaceJavaScriptEscapes(text),
-      n,
+  ...escapeCases.map(({ build, label }) =>
+    defineTextCheck(`JavaScript escape replacement (${label})`, build, ({ text }) =>
+      replaceJavaScriptEscapes(text),
     ),
   ),
   ...diagnosticsCases.map(defineDiagnosticsCheck),
@@ -1052,6 +1096,7 @@ interface AttemptTiming {
  */
 function timeInterleaved(
   check: ScalingCheck,
+  repetitions: number,
   attemptLabel: string,
   reportProgress: ReportProgress,
 ): AttemptTiming {
@@ -1062,7 +1107,7 @@ function timeInterleaved(
       reportProgress({
         stage: `size ${timing.size}, run ${run} of ${RUNS_PER_SIZE}, ${attemptLabel}`,
       })
-      const measurement = check.measure(timing.size)
+      const measurement = check.measure(timing.size, repetitions)
       timing.bestMs = selectMinimumPositiveSample(timing.bestMs, measurement.elapsedMs)
       timing.mismatch ??= measurement.mismatch
     }
@@ -1078,6 +1123,28 @@ function timeInterleaved(
 }
 
 /**
+ * The repetitions that make an N sample span SAMPLE_FLOOR_MS, found by doubling from one (a coarse
+ * clock reads zero for a short sample, so a measured rate cannot be extrapolated). Noise only
+ * inflates a sample's CPU time, and the timed runs keep the minimum, so one sample at the floor can
+ * be inflated while the minimum the timed runs keep falls below it; doubling therefore stops only
+ * once the smaller of two samples at a count reaches the floor. 4N reuses the count, so its sample
+ * is longer still and both sizes divide by the same repetitions.
+ */
+function calibrateRepetitions(check: ScalingCheck): number {
+  let repetitions = 1
+  while (
+    repetitions < MAX_REPETITIONS &&
+    Math.min(
+      check.measure(check.n, repetitions).sampleMs,
+      check.measure(check.n, repetitions).sampleMs,
+    ) < SAMPLE_FLOOR_MS
+  ) {
+    repetitions *= 2
+  }
+  return repetitions
+}
+
+/**
  * Times one check at N and 4N. A ratio outside [MIN_PLAUSIBLE_RATIO, SCALING_THRESHOLD] reports a
  * "retry" line and measures again, up to RATIO_RETRY_COUNT times; the check passes on the first
  * attempt inside the range and fails only when every attempt lands outside it, as the last
@@ -1087,12 +1154,14 @@ function runTimedCheck(check: ScalingCheck, reportProgress: ReportProgress): Che
   /** Warm JIT compilation and cachedBySize's fixtures at both sizes before any timed run. */
   for (const size of [check.n, check.n * 4]) {
     reportProgress({ stage: `size ${size}, warmup` })
-    check.measure(size)
+    check.measure(size, 1)
   }
+  reportProgress({ stage: `size ${check.n}, calibration` })
+  const repetitions = calibrateRepetitions(check)
 
   for (let attempt = 0; ; attempt++) {
     const attemptLabel = `attempt ${attempt + 1} of ${RATIO_RETRY_COUNT + 1}`
-    const { at4N, atN, runs } = timeInterleaved(check, attemptLabel, reportProgress)
+    const { at4N, atN, runs } = timeInterleaved(check, repetitions, attemptLabel, reportProgress)
 
     const wrongResult = [atN, at4N].find((timing) => timing.mismatch !== undefined)
     if (wrongResult?.mismatch) {
@@ -1113,6 +1182,7 @@ function runTimedCheck(check: ScalingCheck, reportProgress: ReportProgress): Che
       `${check.name}: N=${check.n} ${atN.bestMs.toFixed(3)}ms, 4N=${at4N.size} ` +
       `${at4N.bestMs.toFixed(3)}ms, ratio=${ratio.toFixed(2)} (threshold ${SCALING_THRESHOLD}, ` +
       `floor ${MIN_PLAUSIBLE_RATIO})` +
+      `, ${repetitions} runs per sample, ${(atN.bestMs * repetitions).toFixed(1)}ms CPU per N sample` +
       (runs < RUNS_PER_SIZE
         ? `, stopped after ${runs} of ${RUNS_PER_SIZE} runs per size above ${EARLY_EXIT_RATIO}`
         : '')
