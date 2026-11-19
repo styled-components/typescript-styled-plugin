@@ -153,13 +153,18 @@ thread running the check (`process.threadCpuUsage`), so time spent preempted by
 other processes never counts; the script needs the development Node version for
 that API. A sample repeats the operation back to back until it spans the sample
 floor defined in that file (the repetition count is calibrated once per check
-at N and reused at 4N, and the printed time is per run), so a coarse CPU clock
-(whole milliseconds on GitHub's ubuntu runners) rounds by a few percent of any
-sample, whatever the check's cost. A
-linear operation lands near 4; a quadratic one lands near 16;
-the threshold sits between the two. Every timed result is also checked against
-what its fixture must produce (a diagnostic per misspelled property, a fold
-per rule, the expected substituted text), because the language service turns
+at N, doubling until the smaller of two samples reaches the floor, and reused
+at 4N; the printed time is per run), so a coarse CPU clock (whole milliseconds
+on GitHub's ubuntu runners) rounds by a few percent of any sample, whatever the
+check's cost. Each output line also prints the runs per sample and the CPU time
+per N sample, which shows whether a sample cleared the floor. Each timed run of
+a language feature gets a new template context, the way tsserver brings one per
+request; a reused context would carry the plugin's per-context memos (line map,
+escape-replaced text) between runs and hide their cost. A linear operation
+lands near 4; a quadratic one lands near 16; the threshold sits between the
+two. Every timed result is also checked against what its fixture must produce
+(a diagnostic per misspelled property, a fold per rule, the expected
+substituted text), because the language service turns
 a feature's exception into an empty result that is fast at every size; a
 wrong result fails the check on its own, and so does a ratio below the floor
 defined in that file, which means the timed call stopped doing work that
