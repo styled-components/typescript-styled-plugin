@@ -1,15 +1,20 @@
 import * as ts from 'typescript/lib/tsserverlibrary.js'
 import { assert, describe, it } from 'vitest'
 
+import { PluginConfigurationManager } from '../../src/configuration/plugin-configuration'
 import createPlugin from '../../src/index'
+import { EditorConfigurationManager } from '../../src/tsserver/editor-configuration'
 import { pluginIdentity } from '../../src/tsserver/plugin-identity'
 import {
   isSupportedTypeScriptVersion,
   TsServerStyledPlugin,
 } from '../../src/tsserver/tsserver-plugin'
 
+const configPrefix = `[${pluginIdentity}] config: `
+const defaultTags = new PluginConfigurationManager().config.tags
+
 describe('TsServerStyledPlugin', () => {
-  it('should log a configuration change without retaining per-project summaries', () => {
+  it('should log the resolved configuration after a legacy configuration change', () => {
     const messages: string[] = []
     const plugin = new TsServerStyledPlugin(ts)
     plugin.create(createPluginCreateInfo(messages))
@@ -17,7 +22,16 @@ describe('TsServerStyledPlugin', () => {
 
     plugin.onConfigurationChanged({ tags: ['sty'], validate: 'false' })
 
-    assert.deepEqual(messages, [`[${pluginIdentity}] onConfigurationChanged`])
+    assert.deepEqual(
+      messages.map((message) => (message.startsWith(configPrefix) ? configPrefix : message)),
+      [`[${pluginIdentity}] onConfigurationChanged`, configPrefix],
+    )
+    assert.deepEqual(JSON.parse(messages[1]?.slice(configPrefix.length) ?? ''), {
+      emmet: {},
+      lint: { emptyRules: 'ignore' },
+      tags: ['sty'],
+      validate: false,
+    })
   })
 
   it.each([
@@ -33,7 +47,10 @@ describe('TsServerStyledPlugin', () => {
 
       plugin.onConfigurationChanged(configuration)
 
-      assert.deepEqual(messages, [`[${pluginIdentity}] onConfigurationChanged`])
+      assert.deepEqual(
+        messages.map((message) => (message.startsWith(configPrefix) ? configPrefix : message)),
+        [`[${pluginIdentity}] onConfigurationChanged`, configPrefix],
+      )
     },
   )
 
@@ -47,12 +64,10 @@ describe('TsServerStyledPlugin', () => {
       }),
     )
 
-    assert.deepEqual(lastLoggedConfiguration(messages), {
-      tagCount: 2,
+    assert.deepEqual(lastLoggedSettings(messages), {
+      tags: ['projectTag', 'editorTag'],
       validate: false,
     })
-    assert.notInclude(messages.join('\n'), 'projectTag')
-    assert.notInclude(messages.join('\n'), 'editorTag')
   })
 
   it('should prefer a legacy runtime configuration that arrives before create', () => {
@@ -65,8 +80,8 @@ describe('TsServerStyledPlugin', () => {
       }),
     )
 
-    assert.deepEqual(lastLoggedConfiguration(messages), {
-      tagCount: 1,
+    assert.deepEqual(lastLoggedSettings(messages), {
+      tags: ['runtimeTag'],
       validate: true,
     })
   })
@@ -81,8 +96,8 @@ describe('TsServerStyledPlugin', () => {
       }),
     )
 
-    assert.deepEqual(lastLoggedConfiguration(messages), {
-      tagCount: 7,
+    assert.deepEqual(lastLoggedSettings(messages), {
+      tags: defaultTags,
       validate: true,
     })
   })
@@ -102,15 +117,15 @@ describe('TsServerStyledPlugin', () => {
       }),
     )
 
-    assert.deepEqual(lastLoggedConfiguration(messages), { tagCount: 7, validate: true })
+    assert.deepEqual(lastLoggedSettings(messages), { tags: defaultTags, validate: true })
   })
 
   it('should share the last valid editor configuration across project plugin instances', () => {
     const firstMessages: string[] = []
     const secondMessages: string[] = []
-    const firstProjectPlugin = createPlugin({ typescript: ts })
-    const projectService = createProjectService(firstMessages)
-    firstProjectPlugin.create(createPluginCreateInfo(firstMessages, { projectService }))
+    const editorConfiguration = new EditorConfigurationManager()
+    const firstProjectPlugin = new TsServerStyledPlugin(ts, () => editorConfiguration)
+    firstProjectPlugin.create(createPluginCreateInfo(firstMessages))
     firstProjectPlugin.onConfigurationChanged(editorEnvelope(['editorTag']))
     firstProjectPlugin.onConfigurationChanged({
       editorConfiguration: {
@@ -118,7 +133,7 @@ describe('TsServerStyledPlugin', () => {
       },
     })
 
-    const secondProjectPlugin = createPlugin({ typescript: ts })
+    const secondProjectPlugin = new TsServerStyledPlugin(ts, () => editorConfiguration)
     secondProjectPlugin.create(
       createPluginCreateInfo(secondMessages, {
         config: {
@@ -129,17 +144,72 @@ describe('TsServerStyledPlugin', () => {
           name: '@styled/typescript-styled-plugin',
         },
         projectPluginConfiguration: { tags: ['secondTag'] },
-        projectService,
       }),
     )
 
-    assert.deepEqual(lastLoggedConfiguration(firstMessages), {
-      tagCount: 2,
+    assert.deepEqual(secondMessages, [
+      `[${pluginIdentity}] Ignored editor configuration: extraTags must be an array.`,
+      configPrefix +
+        JSON.stringify({
+          emmet: {},
+          lint: { emptyRules: 'ignore' },
+          tags: ['secondTag', 'editorTag'],
+          validate: true,
+        }),
+    ])
+  })
+
+  it("should read a project's own plugin entry as its base, not as an editor envelope", () => {
+    const messages: string[] = []
+    const projectService = createProjectService(messages)
+    const create = (projectPluginConfiguration: Readonly<Record<string, unknown>>) => {
+      createPlugin({ typescript: ts }).create(
+        createPluginCreateInfo(messages, { projectPluginConfiguration, projectService }),
+      )
+      return lastLoggedSettings(messages)
+    }
+
+    assert.deepEqual(create({ tags: ['a'] }), { tags: ['a'], validate: true })
+    assert.deepEqual(create({ editorConfiguration: { extraTags: ['leak'] }, tags: ['b'] }), {
+      tags: ['b'],
       validate: true,
     })
-    assert.notInclude(secondMessages.join('\n'), 'unknown editor configuration envelope fields')
-    assert.notInclude(firstMessages.join('\n'), 'editorTag')
-    assert.notInclude(firstMessages.join('\n'), 'secondTag')
+    assert.deepEqual(create({ tags: ['c'] }), { tags: ['c'], validate: true })
+  })
+
+  it('should find the project entry of a plugin loaded under an npm alias', () => {
+    const messages: string[] = []
+    const projectService = createProjectService(messages)
+    const create = (options: Parameters<typeof createPluginCreateInfo>[1]) => {
+      createPlugin({ typescript: ts }).create(
+        createPluginCreateInfo(messages, { ...options, projectService }),
+      )
+      return lastLoggedSettings(messages)
+    }
+
+    assert.deepEqual(create({ projectPluginConfiguration: { tags: ['a1', 'a2', 'a3'] } }), {
+      tags: ['a1', 'a2', 'a3'],
+      validate: true,
+    })
+    assert.deepEqual(
+      create({
+        pluginName: 'styled-alias',
+        projectPluginConfiguration: { tags: ['b'], validate: false },
+      }),
+      { tags: ['b'], validate: false },
+    )
+    assert.deepEqual(create({ projectPluginConfiguration: { tags: ['c1'] } }), {
+      tags: ['c1'],
+      validate: true,
+    })
+    assert.deepEqual(
+      create({
+        config: { editorConfiguration: { extraTags: ['editorTag'] }, name: 'styled-alias' },
+        pluginName: 'styled-alias',
+        projectPluginConfiguration: { tags: ['d'], validate: false },
+      }),
+      { tags: ['d', 'editorTag'], validate: false },
+    )
   })
 
   it('should isolate editor configuration between project services', () => {
@@ -156,8 +226,8 @@ describe('TsServerStyledPlugin', () => {
       }),
     )
 
-    assert.deepEqual(lastLoggedConfiguration(secondMessages), {
-      tagCount: 1,
+    assert.deepEqual(lastLoggedSettings(secondMessages), {
+      tags: ['secondTag'],
       validate: true,
     })
   })
@@ -180,7 +250,7 @@ describe('TsServerStyledPlugin', () => {
       }),
     )
 
-    assert.deepEqual(lastLoggedConfiguration(firstMessages), { tagCount: 1, validate: true })
+    assert.deepEqual(lastLoggedSettings(firstMessages), { tags: ['secondTag'], validate: true })
   })
 
   it('should compare a separately constructed project entry by effective settings', () => {
@@ -208,7 +278,7 @@ describe('TsServerStyledPlugin', () => {
       }),
     )
 
-    assert.deepEqual(lastLoggedConfiguration(messages), { tagCount: 1, validate: true })
+    assert.deepEqual(lastLoggedSettings(messages), { tags: ['secondTag'], validate: true })
   })
 
   it('should give a new project the last valid legacy state after an invalid envelope', () => {
@@ -242,7 +312,7 @@ describe('TsServerStyledPlugin', () => {
       }),
     )
 
-    assert.deepEqual(lastLoggedConfiguration(messages), { tagCount: 1, validate: true })
+    assert.deepEqual(lastLoggedSettings(messages), { tags: ['runtimeTag'], validate: true })
   })
 
   it('should refresh once per project service only when effective configuration changes', () => {
@@ -312,11 +382,13 @@ function createPluginCreateInfo(
   messages: string[],
   {
     config,
+    pluginName = '@styled/typescript-styled-plugin',
     projectPluginConfiguration,
     projectService,
     refreshDiagnostics,
   }: {
     config?: unknown
+    pluginName?: string
     projectPluginConfiguration?: Readonly<Record<string, unknown>>
     projectService?: ReturnType<typeof createProjectService>
     refreshDiagnostics?: () => void
@@ -334,7 +406,7 @@ function createPluginCreateInfo(
   }
   const projectPluginEntry = projectPluginConfiguration
     ? {
-        name: '@styled/typescript-styled-plugin',
+        name: pluginName,
         ...projectPluginConfiguration,
       }
     : undefined
@@ -371,14 +443,14 @@ function editorEnvelope(extraTags: ReadonlyArray<string>): unknown {
   }
 }
 
-function lastLoggedConfiguration(
-  messages: ReadonlyArray<string>,
-  fromEnd = 0,
-): Record<string, unknown> {
-  const configPrefix = `[${pluginIdentity}] config: `
-  const message = messages.filter((message) => message.startsWith(configPrefix)).at(-(fromEnd + 1))
+function lastLoggedSettings(messages: ReadonlyArray<string>): Record<string, unknown> {
+  const message = messages.filter((message) => message.startsWith(configPrefix)).at(-1)
   assert.isDefined(message)
-  return JSON.parse(message.slice(configPrefix.length)) as Record<string, unknown>
+  const { tags, validate } = JSON.parse(message.slice(configPrefix.length)) as Record<
+    string,
+    unknown
+  >
+  return { tags, validate }
 }
 
 describe('isSupportedTypeScriptVersion', () => {

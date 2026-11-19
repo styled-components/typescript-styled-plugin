@@ -5,7 +5,11 @@ import { isDeepStrictEqual } from 'node:util'
 import { decorateWithTemplateLanguageService } from 'typescript-template-language-service-decorator'
 import type * as ts from 'typescript/lib/tsserverlibrary.js'
 
-import { describeValue, PluginConfigurationManager } from '../configuration/plugin-configuration.ts'
+import {
+  describeValue,
+  PluginConfigurationManager,
+  type StyledPluginConfiguration,
+} from '../configuration/plugin-configuration.ts'
 import { StyledTemplateLanguageService } from '../template-language-service.ts'
 import { getTemplateSettings } from '../template-settings.ts'
 import { StyledVirtualDocumentProvider } from '../virtual-document/styled-virtual-document-provider.ts'
@@ -29,16 +33,27 @@ export class TsServerStyledPlugin {
     this.logger = logger
     const editorConfiguration = this.getEditorConfiguration(info)
     this.editorConfiguration = editorConfiguration
-    const editorUpdate = editorConfiguration.updateFromPluginConfig(info.config, logger)
-    const configurationManager = new ProjectConfigurationManager(editorConfiguration, info.project)
     const projectConfiguration = readProjectPluginConfiguration(info)
+    /**
+     * Only a payload tsserver substituted for the project's entry (a pre-project configurePlugin)
+     * is dynamic configuration; the project's own entry is the base, whatever keys it holds.
+     */
+    const isRuntimeConfiguration = !isSameEntry(info.config, projectConfiguration)
+    const editorUpdate = isRuntimeConfiguration
+      ? editorConfiguration.updateFromPluginConfig(info.config, logger)
+      : { changed: false, matched: false }
+    const configurationManager = new ProjectConfigurationManager(editorConfiguration, info.project)
     configurationManager.updateFromProjectConfig(projectConfiguration, logger)
-    if (!editorUpdate.matched && isLegacyConfigurationOverride(info.config, projectConfiguration)) {
+    if (
+      isRuntimeConfiguration &&
+      !editorUpdate.matched &&
+      isLegacyConfigurationOverride(info.config, projectConfiguration)
+    ) {
       const legacyConfiguration = new PluginConfigurationManager()
       legacyConfiguration.updateFromPluginConfig(info.config, logger)
       editorConfiguration.activateLegacy(legacyConfiguration.config, logger)
     }
-    this.logConfigurationSummary(configurationManager, logger)
+    logConfiguration(configurationManager.config, logger)
 
     if (!isSupportedTypeScriptVersion(this.typescript)) {
       logger.log(
@@ -80,36 +95,44 @@ export class TsServerStyledPlugin {
       const legacyConfiguration = new PluginConfigurationManager()
       legacyConfiguration.updateFromPluginConfig(config, logger)
       this.editorConfiguration?.activateLegacy(legacyConfiguration.config, logger)
+      if (logger) {
+        logConfiguration(legacyConfiguration.config, logger)
+      }
     }
   }
-
-  private logConfigurationSummary(
-    manager: ProjectConfigurationManager,
-    logger: TsServerLogger,
-  ): void {
-    const { tags, validate } = manager.config
-    logger.log(
-      'config: ' +
-        describeValue({
-          tagCount: tags.length,
-          validate,
-        }),
-    )
-  }
 }
 
+function logConfiguration(config: StyledPluginConfiguration, logger: TsServerLogger): void {
+  logger.log('config: ' + describeValue(config))
+}
+
+/**
+ * tsserver passes the project's own `plugins[]` entry as `PluginCreateInfo.config`, or a
+ * pre-project override with that entry's `name` copied onto it, so the entry is found by
+ * identity first and then by `config.name`. The name can be an npm alias of this package.
+ */
 function readProjectPluginConfiguration(info: ts.server.PluginCreateInfo): unknown {
   const plugins = info.project.getCompilerOptions().plugins
-  return Array.isArray(plugins) ? plugins.find(isStyledPluginConfiguration) : undefined
+  if (!Array.isArray(plugins)) {
+    return undefined
+  }
+  const config: unknown = info.config
+  if (plugins.some((entry) => entry === config)) {
+    return config
+  }
+  const name = isRecord(config) && typeof config.name === 'string' ? config.name : pluginPackageName
+  return plugins.find((entry) => isRecord(entry) && entry.name === name)
 }
 
-function isStyledPluginConfiguration(value: unknown): value is ts.PluginImport {
+function isSameEntry(config: unknown, projectConfiguration: unknown): boolean {
   return (
-    typeof value === 'object' &&
-    value !== null &&
-    'name' in value &&
-    value.name === pluginPackageName
+    projectConfiguration !== undefined &&
+    (config === projectConfiguration || isDeepStrictEqual(config, projectConfiguration))
   )
+}
+
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === 'object' && value !== null
 }
 
 function isLegacyConfigurationOverride(config: unknown, projectConfiguration: unknown): boolean {

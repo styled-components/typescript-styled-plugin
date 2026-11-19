@@ -1,10 +1,11 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import * as path from 'node:path'
 
 import type { server as tsserver } from 'typescript'
 import { assert, describe, it } from 'vitest'
 
+import { repositoryRoot } from '../fixture-paths'
 import {
   bodyOf,
   pluginDiagnosticCode,
@@ -13,6 +14,7 @@ import {
   startServer,
 } from '../tsserver-fixture/helpers'
 import { mark } from '../tsserver-fixture/markers'
+import { pluginPackageName } from '../tsserver-fixture/server'
 
 describe.concurrent('Plugin lifecycle', () => {
   it('should keep tsserver responsive when a configured plugin can’t be found (a tsserver guard, not this plugin’s own resilience)', async (context) => {
@@ -539,6 +541,49 @@ describe.concurrent('Plugin lifecycle', () => {
     await server.close()
   })
 
+  it("should read editorConfiguration in a project's own plugin entry as neither base nor overlay", async (context) => {
+    const directory = mkdtempSync(path.join(tmpdir(), 'styled-own-entry-'))
+    context.onTestFinished(() => rmSync(directory, { force: true, recursive: true }))
+    const server = startServer(context)
+    const files = openProjects(server, directory, [
+      { name: pluginPackageName, tags: ['a'] },
+      { editorConfiguration: { extraTags: ['leak'] }, name: pluginPackageName, tags: ['b'] },
+      { name: pluginPackageName, tags: ['c'] },
+    ])
+
+    for (const [index, file] of files.entries()) {
+      assert.deepEqual(await recognizedTags(server, file), [['a', 'b', 'c'][index]])
+    }
+    await server.close()
+  })
+
+  it('should keep the settings of a plugin loaded under an npm alias in its own project', async (context) => {
+    const directory = mkdtempSync(path.join(tmpdir(), 'styled-alias-entry-'))
+    context.onTestFinished(() => rmSync(directory, { force: true, recursive: true }))
+    mkdirSync(path.join(directory, 'node_modules'))
+    symlinkSync(repositoryRoot, path.join(directory, 'node_modules', 'styled-alias'), 'dir')
+    const server = startServer(context, { pluginProbeLocations: [directory] })
+    const files = openProjects(server, directory, [
+      { name: pluginPackageName, tags: ['a1', 'a2', 'a3'] },
+      { name: 'styled-alias', tags: ['b'], validate: false },
+      { name: pluginPackageName, tags: ['c1'] },
+    ])
+
+    assert.deepEqual(await recognizedTags(server, files[0]), ['a1', 'a2', 'a3'])
+    assert.deepEqual(await recognizedTags(server, files[1]), ['b'])
+    assert.deepEqual(await recognizedTags(server, files[2]), ['c1'])
+    const diagnosticTexts = async (file: string) =>
+      pluginDiagnostics(await server.request('semanticDiagnosticsSync', { file })).map(
+        ({ text }) => text,
+      )
+    assert.deepEqual(
+      await diagnosticTexts(files[0]),
+      Array.from({ length: 3 }, () => "Unknown property: 'boarder'"),
+    )
+    assert.deepEqual(await diagnosticTexts(files[1]), [])
+    await server.close()
+  })
+
   it('should keep configuration current when external projects close and reopen', async (context) => {
     const directory = mkdtempSync(path.join(tmpdir(), 'styled-editor-close-'))
     context.onTestFinished(() => rmSync(directory, { force: true, recursive: true }))
@@ -800,4 +845,43 @@ function editorEnvelope(extraTags: ReadonlyArray<string>): unknown {
       extraTags,
     },
   }
+}
+
+const probeTags = ['a', 'a1', 'a2', 'a3', 'b', 'c', 'c1', 'leak'] as const
+const probeSource = mark(
+  probeTags.map((tag) => `const ${tag}Value = ${tag}\`⟨${tag}⟩boarder: 0;\``).join('\n'),
+)
+
+/** Opens one configured project per plugin entry, each holding `probeSource`. */
+function openProjects(
+  server: ReturnType<typeof startServer>,
+  directory: string,
+  entries: ReadonlyArray<Readonly<Record<string, unknown>>>,
+): string[] {
+  return entries.map((entry, index) => {
+    const projectDirectory = path.join(directory, `project-${index}`)
+    mkdirSync(projectDirectory)
+    writeFileSync(
+      path.join(projectDirectory, 'tsconfig.json'),
+      JSON.stringify({ compilerOptions: { plugins: [entry] }, files: ['main.ts'] }),
+    )
+    const file = path.join(projectDirectory, 'main.ts')
+    server.notify('open', { file, fileContent: probeSource.text })
+    return file
+  })
+}
+
+/** The probe tags whose template gets CSS property completions in `file`. */
+async function recognizedTags(
+  server: ReturnType<typeof startServer>,
+  file: string,
+): Promise<string[]> {
+  const recognized: string[] = []
+  for (const tag of probeTags) {
+    const response = await server.request('completions', { file, ...probeSource.at(tag) })
+    if (response.success && bodyOf(response).some(({ name }) => name === 'color')) {
+      recognized.push(tag)
+    }
+  }
+  return recognized
 }

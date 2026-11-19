@@ -80,6 +80,8 @@ type NotificationCommand = keyof NotificationTypes
 
 export interface TSServerOptions {
   globalPlugins?: boolean
+  /** Directories searched after the e2e root, each holding a `node_modules` with plugins. */
+  pluginProbeLocations?: ReadonlyArray<string>
   project?: FixtureProject
   /** An alias from test/e2e/package.json; defaults to `TSSERVER_TYPESCRIPT_PACKAGE`, then `typescript`. */
   typescriptPackage?: string
@@ -112,6 +114,7 @@ export class TSServer {
 
   constructor({
     globalPlugins = false,
+    pluginProbeLocations = [],
     project = 'styled-project-fixture',
     typescriptPackage,
   }: TSServerOptions = {}) {
@@ -138,7 +141,7 @@ export class TSServer {
         '--logFile',
         this.logFile,
         '--pluginProbeLocations',
-        e2eRoot,
+        [e2eRoot, ...pluginProbeLocations].join(','),
         ...(globalPlugins ? ['--globalPlugins', pluginPackageName] : []),
       ],
       { cwd: path.join(e2eRoot, project), stdio: 'pipe' },
