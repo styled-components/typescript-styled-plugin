@@ -1,5 +1,5 @@
 /**
- * Scaling guardrail (`corepack yarn test:scaling`, part of `verify` and CI): fails when a hot
+ * Scaling guardrail (`pnpm test:scaling`, part of `verify` and CI): fails when a hot
  * operation's cost grows superlinearly with its input, returns a wrong result for its fixture,
  * stops doing work that grows with its input, or when the diagnostics validation cache retains
  * past its byte budget.
@@ -1305,7 +1305,7 @@ function requireNoBytecodeFlushing(): void {
     throw new Error(
       `The retained-heap guardrail needs Node's ${NO_BYTECODE_FLUSHING_FLAG} flag, or V8's ` +
         'bytecode flushing moves its reading by megabytes between runs: run ' +
-        '`corepack yarn test:scaling`, which passes it, instead of invoking this file directly.',
+        '`pnpm test:scaling`, which passes it, instead of invoking this file directly.',
     )
   }
 }
@@ -1504,7 +1504,7 @@ async function main() {
   if (entry === undefined) {
     throw new Error(
       'The scaling check runs each check in a worker loaded from its own file, found through ' +
-        'process.argv[1], which is empty: run it as `corepack yarn test:scaling`.',
+        'process.argv[1], which is empty: run it as `pnpm test:scaling`.',
     )
   }
   const filter = parseFilterArgument(process.argv.slice(2))

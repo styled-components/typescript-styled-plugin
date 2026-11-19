@@ -1,0 +1,11 @@
+packages:
+  - .
+  - test/e2e
+
+minimumReleaseAge: 1440
+
+permissions:
+  tsdown:
+    skills: false
+
+saveExact: true

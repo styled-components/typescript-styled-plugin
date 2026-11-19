@@ -19,11 +19,8 @@
     "type": "git",
     "url": "https://github.com/styled-components/typescript-styled-plugin.git"
   },
-  "workspaces": [
-    ".",
-    "test/e2e"
-  ],
   "files": [
+    "CHANGELOG.md",
     "lib"
   ],
   "type": "module",
@@ -84,13 +81,13 @@
     "format:check": "oxfmt --check .",
     "lint": "oxlint . --deny-warnings",
     "lint:fix": "oxlint --fix .",
-    "pack:artifact": "yarn pack --out package-artifact/package.tgz",
-    "prepack": "yarn compile",
-    "test": "yarn test:unit && yarn test:e2e",
-    "test:e2e": "yarn compile && yarn test:e2e:run",
-    "test:e2e:5.9": "TSSERVER_TYPESCRIPT_PACKAGE=typescript-5.9 yarn test:e2e",
-    "test:e2e:current": "TSSERVER_TYPESCRIPT_PACKAGE=typescript-current yarn test:e2e",
-    "test:e2e:minimum": "TSSERVER_TYPESCRIPT_PACKAGE=typescript-minimum yarn test:e2e",
+    "pack:artifact": "pnpm pack --out package-artifact/package.tgz",
+    "prepack": "pnpm compile",
+    "test": "pnpm test:unit && pnpm test:e2e",
+    "test:e2e": "pnpm compile && pnpm test:e2e:run",
+    "test:e2e:5.9": "TSSERVER_TYPESCRIPT_PACKAGE=typescript-5.9 pnpm test:e2e",
+    "test:e2e:current": "TSSERVER_TYPESCRIPT_PACKAGE=typescript-current pnpm test:e2e",
+    "test:e2e:minimum": "TSSERVER_TYPESCRIPT_PACKAGE=typescript-minimum pnpm test:e2e",
     "test:e2e:run": "node --experimental-strip-types scripts/with-deadline.ts 300000 -- vitest run test/e2e/scenarios --configLoader runner",
     "test:pack": "node --experimental-strip-types scripts/check-pack-contents.ts",
     "test:package-api": "node --experimental-strip-types test/package-api/runtime.ts",
@@ -98,7 +95,7 @@
     "test:scaling": "node --expose-gc --no-flush-bytecode --experimental-transform-types --no-warnings test/performance/scaling-check.ts",
     "test:unit": "node --experimental-strip-types scripts/with-deadline.ts 60000 -- vitest run test/unit --configLoader runner",
     "typecheck": "tsc --noEmit -p . && tsc --noEmit -p scripts && tsc --noEmit -p test/e2e && tsc --noEmit -p test/package-api",
-    "verify": "yarn format:check && yarn lint && yarn typecheck && yarn test:unit && yarn test:scaling && yarn pack:artifact && yarn test:e2e:run && yarn test:package-api && yarn test:package-api:consumers && yarn test:pack",
+    "verify": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test:unit && pnpm test:scaling && pnpm pack:artifact && pnpm test:e2e:run && pnpm test:package-api && pnpm test:package-api:consumers && pnpm test:pack",
     "watch:compile": "tsdown --watch"
   },
   "dependencies": {
@@ -119,5 +116,5 @@
     "vite": "^8.3.8",
     "vitest": "^5.1.0"
   },
-  "packageManager": "yarn@4.18.1"
+  "packageManager": "pnpm@12.21.0"
 }

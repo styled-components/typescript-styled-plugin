@@ -3,7 +3,7 @@
  * and the 1.0.1 deep subpaths through require(), then runtime-esm-consumer.mjs for import().
  *
  * Usage: node --experimental-strip-types test/package-api/runtime.ts [tarball]
- * The tarball defaults to package-artifact/package.tgz, which `corepack yarn pack:artifact`
+ * The tarball defaults to package-artifact/package.tgz, which `pnpm pack:artifact`
  * writes after building lib/.
  */
 import { execFileSync } from 'node:child_process'
@@ -38,7 +38,7 @@ const ESM_CONSUMER_HEAP_CAP_MB = 512
 const tarballPath = path.resolve(process.argv[2] ?? DEFAULT_TARBALL)
 if (!existsSync(tarballPath)) {
   console.error(
-    `No packed tarball at ${tarballPath}. Run "corepack yarn pack:artifact" (it builds lib/ ` +
+    `No packed tarball at ${tarballPath}. Run "pnpm pack:artifact" (it builds lib/ ` +
       'first), or pass a tarball path.',
   )
   process.exit(1)

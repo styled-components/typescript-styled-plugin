@@ -1,10 +1,10 @@
 /**
  * Compare-release sensor: runs the same templates through the working build (lib/, from
- * `corepack yarn compile`) and a published release of this package, each loaded as tsserver loads
+ * `pnpm compile`) and a published release of this package, each loaded as tsserver loads
  * a plugin but inside an in-memory TypeScript language service, and prints every diagnostic,
  * completion list, hover, folding result, and code fix that differs.
  *
- * Usage: `corepack yarn compare-release [--version 1.0.1] [--all] [case-module ...]`
+ * Usage: `pnpm compare-release [--version 1.0.1] [--all] [case-module ...]`
  * - A case module's default export is an array of cases (CompareCase in
  *   scripts/compare-release-cases.ts, the default module when none is given). `⟨name⟩` in a case's
  *   code marks a position (stripped before the code is used); `ops` defaults to one `diag`.
@@ -137,12 +137,10 @@ function newestModification(directory: string): number {
 
 function checkWorkingBuild(): void {
   if (!existsSync(WORKING_ENTRY)) {
-    fail(`The working build is missing (${WORKING_ENTRY}). Run corepack yarn compile first.`)
+    fail(`The working build is missing (${WORKING_ENTRY}). Run pnpm compile first.`)
   }
   if (newestModification(path.join(REPOSITORY_ROOT, 'src')) > statSync(WORKING_ENTRY).mtimeMs) {
-    fail(
-      'lib/ is older than src/, so it would compare stale code. Run corepack yarn compile first.',
-    )
+    fail('lib/ is older than src/, so it would compare stale code. Run pnpm compile first.')
   }
 }
 

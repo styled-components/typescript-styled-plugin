@@ -156,7 +156,7 @@ export function requireGc(scriptName: string): () => void {
   if (!gc) {
     throw new Error(
       `Heap measurement needs global gc, which only Node's --expose-gc flag provides: run ` +
-        `\`corepack yarn ${scriptName}\`, which passes it, instead of invoking this file directly.`,
+        `\`pnpm ${scriptName}\`, which passes it, instead of invoking this file directly.`,
     )
   }
   return gc

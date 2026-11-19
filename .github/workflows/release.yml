@@ -35,11 +35,13 @@ jobs:
           # authenticated by the github-token input, not this checkout's persisted git credential.
           persist-credentials: false
 
-      # Sets up Node.js without a registry-url: nothing in this job runs npm. @changesets/cli
-      # publishes through Yarn (package.json packageManager), and Yarn never reads the .npmrc
-      # that registry-url would write; it takes the publish registry from package.json
-      # publishConfig.
+      # Sets up Node.js without the dependency cache, so a publish never installs from a restored
+      # cache, and without a registry-url, which nothing here needs: pnpm takes the publish
+      # registry from package.json publishConfig and does the OIDC exchange itself, so a
+      # registry-url .npmrc would only add setup-node's placeholder token to pnpm's credentials.
       - uses: ./.github/actions/setup
+        with:
+          cache: 'false'
 
       - name: Create Release Pull Request or Publish
         id: changesets
@@ -50,27 +52,26 @@ jobs:
         uses: changesets/action@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
         with:
           create-github-releases: true
-          publish-script: yarn changeset-publish
-          version-script: yarn changeset-version
+          publish-script: pnpm changeset-publish
+          version-script: pnpm changeset-version
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # No NPM_TOKEN: publishing relies on npm trusted publishing (OIDC), configured on
           # npmjs.com for this package against this repository and this workflow file (see
-          # docs/maintenance.md, "Releases"). `yarn npm publish` (invoked by `changeset-publish`
-          # through @changesets/cli 3.x's own package-manager detection) exchanges the id-token
-          # permission above for a short-lived npm token on its own whenever it runs under
-          # GitHub Actions. Yarn 4.10.0 added that exchange (yarnpkg/berry#6898) and 4.10.3
-          # fixed it for scoped packages such as this one (#6911), so 4.10.3 is the floor: any
-          # package.json packageManager pin at or above it keeps OIDC publishing working.
-          # Yarn's npmPublishProvenance setting, read from its YARN_-prefixed environment form:
-          # `yarn npm publish` signs a provenance statement linking the published tarball to this
-          # workflow run, through the same id-token permission. Yarn builds that statement before
-          # it contacts the registry and has no fallback, so publishing requires the id-token:
-          # write permission above and a runner that reaches Sigstore's Fulcio
+          # docs/maintenance.md, "Releases"). `pnpm publish` (invoked by `changeset-publish`;
+          # @changesets/cli picks pnpm as described in that section) is native code with no
+          # npm CLI behind it: under GitHub Actions it exchanges the id-token permission above for
+          # a short-lived npm token on its own.
+          # PNPM_CONFIG_PROVENANCE is the environment form pnpm reads for its `provenance`
+          # setting (NPM_CONFIG_PROVENANCE has no effect). It makes provenance mandatory:
+          # `pnpm publish` signs a statement linking the published tarball to this workflow run,
+          # through the same id-token permission. Without it pnpm's auto mode can skip signing
+          # silently. Signing happens before the registry upload, so publishing requires the
+          # id-token: write permission above and a runner that reaches Sigstore's Fulcio
           # (https://fulcio.sigstore.dev) and Rekor (https://rekor.sigstore.dev). When either is
           # down, the publish fails with nothing published; re-run this job once Sigstore recovers
           # (docs/maintenance.md, "Releases").
-          YARN_NPM_PUBLISH_PROVENANCE: 'true'
+          PNPM_CONFIG_PROVENANCE: 'true'
 
   prerelease:
     needs: verify
@@ -91,6 +92,8 @@ jobs:
           # push`, which needs the token actions/checkout persists into the local git config.
 
       - uses: ./.github/actions/setup
+        with:
+          cache: 'false'
 
       # Every push to main runs this job, including the one that merges the "Version Packages"
       # pull request; that merge consumes every pending changeset, so every step below is gated on
@@ -121,7 +124,7 @@ jobs:
         id: version
         if: steps.changesets.outputs.has_pending == 'true'
         run: |
-          yarn changeset-version --snapshot prerelease
+          pnpm changeset-version --snapshot prerelease
           echo "name=$(node -p "require('./package.json').name")" >> "$GITHUB_OUTPUT"
           echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
 
@@ -130,12 +133,12 @@ jobs:
         # No git tag from changesets (--no-git-tag): the next step creates one itself, annotated
         # and named after the snapshot version, once the publish above has actually succeeded.
         run: |
-          yarn changeset-publish --tag test --no-git-tag
+          pnpm changeset-publish --tag test --no-git-tag
           echo "Published ${{ steps.version.outputs.name }}@${{ steps.version.outputs.version }} to the npm \`test\` dist-tag." >> "$GITHUB_STEP_SUMMARY"
         env:
           # Same OIDC-to-npm-token exchange and provenance signing as the release job's publish
           # step; see the comment on that step for the full mechanism and its requirements.
-          YARN_NPM_PUBLISH_PROVENANCE: 'true'
+          PNPM_CONFIG_PROVENANCE: 'true'
 
       - name: Create git tag and GitHub prerelease
         if: steps.changesets.outputs.has_pending == 'true'

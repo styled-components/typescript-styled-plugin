@@ -1,7 +1,10 @@
 version: 2
 updates:
+  # `/` covers .github/workflows only; the composite actions each need their own directory.
   - package-ecosystem: github-actions
-    directory: /
+    directories:
+      - /
+      - /.github/actions/*
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
@@ -10,11 +13,12 @@ updates:
     # excluded the same way without also ignoring the checkout the other workflows use.
     ignore:
       - dependency-name: pullfrog/pullfrog
-  # Covers the yarn.lock at the root and, through the Yarn workspace it declares, test/e2e's
-  # own package.json (docs/maintenance.md, project layout).
+  # Covers the pnpm-lock.yaml at the root and, through the pnpm workspace pnpm-workspace.yaml
+  # declares, test/e2e's own package.json (docs/maintenance.md, project layout).
   # No cooldown key: Dependabot's default cooldown for version updates (3 days) already exceeds
-  # .yarnrc.yml's npmMinimalAgeGate (1440 minutes, one day), so a version Yarn would still hold
-  # back never gets a Dependabot pull request.
+  # pnpm-workspace.yaml's minimumReleaseAge (1440 minutes, one day), so a version pnpm would still
+  # hold back never gets a version-update pull request. Security updates skip the cooldown, so
+  # one for a version under a day old fails install until the age gate passes.
   - package-ecosystem: npm
     directory: /
     schedule:
@@ -31,6 +35,6 @@ updates:
     # dependency (package.json and test/e2e/package.json) compiles the package and runs the
     # default e2e pass, so every update to it is ignored here. The e2e matrix's
     # `npm:typescript@<version>` aliases in test/e2e/package.json need no entry: Dependabot's
-    # npm and Yarn parser skips `npm:` alias requirements, so it never proposes updates for them.
+    # npm and pnpm parser skips `npm:` alias requirements, so it never proposes updates for them.
     ignore:
       - dependency-name: typescript

@@ -370,7 +370,7 @@ async function main() {
   if (entry === undefined) {
     throw new Error(
       'The benchmark runs in a worker loaded from its own file, found through process.argv[1], ' +
-        'which is empty: run it as `corepack yarn benchmark`.',
+        'which is empty: run it as `pnpm benchmark`.',
     )
   }
   const outcome = await runBounded<undefined, string, BenchmarkReport>({
@@ -393,7 +393,7 @@ async function main() {
         `Benchmark stopped at its ${formatSeconds(BENCHMARK_DEADLINE_MS)} wall-clock deadline ` +
           `${where}. A healthy run takes a small fraction of that, so this most likely means a ` +
           'superlinear regression (a quadratic or worse cost, or a loop that never ends) in that ' +
-          'operation; `corepack yarn test:scaling` names the hot operation. See ' +
+          'operation; `pnpm test:scaling` names the hot operation. See ' +
           'docs/architecture.md (substitution and caching invariants).',
       )
       break

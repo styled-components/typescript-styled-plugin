@@ -19,7 +19,7 @@ export default function checkPluginLink() {
   const expectedRoot = realpathSync(repositoryRoot)
   if (resolvedRoot !== expectedRoot) {
     throw new Error(
-      `The e2e workspace resolves ${pluginPackageName} to ${resolvedRoot}, not this repository (${expectedRoot}), so the scenarios would test that other build. Run \`corepack yarn install\` in this repository to relink test/e2e/node_modules/${pluginPackageName} to it.`,
+      `The e2e workspace resolves ${pluginPackageName} to ${resolvedRoot}, not this repository (${expectedRoot}), so the scenarios would test that other build. Run \`pnpm install\` in this repository to relink test/e2e/node_modules/${pluginPackageName} to it.`,
     )
   }
 }

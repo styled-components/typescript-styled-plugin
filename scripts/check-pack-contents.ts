@@ -1,13 +1,15 @@
 /**
- * Asserts the exact file set of the packed tarball `corepack yarn pack:artifact` writes (the
- * packer `yarn npm publish` uses) against the set this script derives from package.json. Fails
- * listing every missing and every unexpected file.
+ * Asserts the exact file set of the packed tarball `pnpm pack:artifact` writes (the packer
+ * `pnpm publish` uses) against the set this script derives from package.json. Fails listing
+ * every missing and every unexpected file.
  *
  * The expected set is:
  * - every path package.json points a consumer at (`main`, `types`, each `exports` and
  *   `typesVersions` target), so a new entry point is expected as soon as package.json names it;
  * - BUILD_HOOK_FILES, which tsdown.config.ts's build hooks write and package.json never names;
- * - ALWAYS_PACKED_FILES, which Yarn packs from the package root whatever `files` says.
+ * - ALWAYS_PACKED_FILES, which pnpm packs from the package root whatever `files` says;
+ * - every root file package.json's `files` names (an entry with no "/" that is not a directory
+ *   on disk), since pnpm does not pack those by default.
  * A missing path outside every package.json `files` entry is flagged as such, since the packer
  * can never include it. Paths are compared literally, so a pattern in package.json
  * (findUnsupportedPatterns) fails the check by name before the tarball is read.
@@ -25,8 +27,8 @@ import process from 'node:process'
 const REPO_ROOT = path.resolve(import.meta.dirname, '..')
 const DEFAULT_TARBALL = path.join(REPO_ROOT, 'package-artifact', 'package.tgz')
 
-/** Yarn packs these from the package root regardless of `files` (package.json, README, LICENSE, CHANGELOG). */
-const ALWAYS_PACKED_FILES = ['CHANGELOG.md', 'LICENSE.txt', 'README.md', 'package.json']
+/** pnpm packs these from the package root regardless of `files` (package.json, README, LICENSE). */
+const ALWAYS_PACKED_FILES = ['LICENSE.txt', 'README.md', 'package.json']
 
 /**
  * Written by tsdown.config.ts's build:done hook and never named in package.json: the classic
@@ -35,7 +37,7 @@ const ALWAYS_PACKED_FILES = ['CHANGELOG.md', 'LICENSE.txt', 'README.md', 'packag
  */
 const BUILD_HOOK_FILES = ['lib/index.d.ts', 'lib/package.json']
 
-/** The directory every entry in a Yarn-packed tarball sits under. */
+/** The directory every entry in a packed tarball sits under. */
 const TARBALL_ROOT = 'package/'
 
 interface Manifest {
@@ -65,8 +67,26 @@ function forEachLeaf(value: unknown, keys: readonly string[], visit: LeafVisitor
   }
 }
 
+/**
+ * A `files` entry is a root file when it has no "/" and is not a directory in the repository
+ * (pnpm packs a directory as a tree). An entry missing from disk counts as a file, so the check
+ * reports it as missing from the tarball.
+ */
+function isRootFileEntry(entry: string): boolean {
+  const name = normalize(entry)
+  if (name.includes('/')) {
+    return false
+  }
+  const stat = fs.statSync(path.join(REPO_ROOT, name), { throwIfNoEntry: false })
+  return stat === undefined || !stat.isDirectory()
+}
+
 function expectedFiles(manifest: Manifest): Set<string> {
-  const expected = new Set<string>([...ALWAYS_PACKED_FILES, ...BUILD_HOOK_FILES])
+  const expected = new Set<string>([
+    ...ALWAYS_PACKED_FILES,
+    ...(manifest.files ?? []).filter(isRootFileEntry).map(normalize),
+    ...BUILD_HOOK_FILES,
+  ])
   for (const target of [manifest.main, manifest.types]) {
     if (target !== undefined) {
       expected.add(normalize(target))
@@ -150,7 +170,7 @@ function main(): void {
   const tarball = path.resolve(process.argv[2] ?? DEFAULT_TARBALL)
   if (!fs.existsSync(tarball)) {
     console.error(
-      `Pack check: no packed tarball at ${tarball}. Run "corepack yarn pack:artifact" (it builds ` +
+      `Pack check: no packed tarball at ${tarball}. Run "pnpm pack:artifact" (it builds ` +
         'lib/ first), or pass a tarball path.',
     )
     process.exitCode = 1
@@ -191,7 +211,7 @@ function main(): void {
     console.error(
       `Pack check: unexpected in the tarball:\n  ${unexpected.join('\n  ')}\n` +
         'Either the build writes a file nothing points at (remove it, or name it in package.json), ' +
-        'or a stray file at the package root matches a name Yarn always packs.',
+        'or a stray file at the package root matches a name pnpm always packs.',
     )
   }
   if (missing.length > 0 || unexpected.length > 0) {

@@ -2,7 +2,7 @@
   "extends": "./tsconfig.consumers.json",
   "compilerOptions": {
     "paths": {
-      "typescript/*": ["../../node_modules/typescript-minimum/*"]
+      "typescript/*": ["../e2e/node_modules/typescript-minimum/*"]
     }
   }
 }

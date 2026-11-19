@@ -4,7 +4,7 @@
     "moduleResolution": "bundler",
     "noEmit": true,
     "paths": {
-      "typescript/*": ["../../node_modules/typescript-current/*"]
+      "typescript/*": ["../e2e/node_modules/typescript-current/*"]
     },
     "skipLibCheck": false,
     "strict": true,

@@ -1,7 +1,11 @@
 name: Set up Node.js and dependencies
-description: Installs Node.js, enables Corepack, restores the Yarn cache, and installs the locked dependencies. Runs after actions/checkout, which has to fetch this file first.
+description: Installs pnpm and Node.js, optionally restores the pnpm store cache, and installs the locked dependencies. Runs after actions/checkout, which has to fetch this file first.
 
 inputs:
+  cache:
+    description: Whether to restore and save the pnpm store cache.
+    required: false
+    default: 'true'
   node-version:
     description: Node.js version to install. Empty reads .github/.node-version, the development version.
     required: false
@@ -10,26 +14,16 @@ inputs:
 runs:
   using: composite
   steps:
+    # The pnpm version comes from package.json's packageManager field.
+    - name: Install pnpm
+      uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
     - name: Install Node.js
       uses: actions/setup-node@v7
       with:
+        cache: ${{ inputs.cache == 'true' && 'pnpm' || '' }}
         node-version: ${{ inputs.node-version }}
         node-version-file: ${{ inputs.node-version == '' && '.github/.node-version' || '' }}
         package-manager-cache: false
-    - name: Enable Corepack
-      shell: bash
-      run: corepack enable
-    - name: Find Yarn cache
-      id: yarn-cache-dir
-      shell: bash
-      run: echo "dir=$(yarn config get cacheFolder)" >> "$GITHUB_OUTPUT"
-    - name: Cache Yarn packages
-      uses: actions/cache@v6
-      with:
-        path: ${{ steps.yarn-cache-dir.outputs.dir }}
-        key: ${{ runner.os }}-yarn-${{ hashFiles('yarn.lock', 'package.json') }}
-        restore-keys: |
-          ${{ runner.os }}-yarn-
     - name: Install dependencies
       shell: bash
-      run: yarn install --immutable
+      run: pnpm install --frozen-lockfile
