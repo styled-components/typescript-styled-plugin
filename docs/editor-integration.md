@@ -11,17 +11,15 @@ the [usage guide](usage.md); plugin internals belong in
 
 ## Availability
 
-The editor configuration protocol is implemented in this source tree and has a
-pending minor changeset. It is not available in version 1.1.1. Before enabling
-it in a released adapter, require a published plugin version that includes this
-protocol and verify the version actually loaded by the host. A dependency range
-alone does not prove which copy tsserver loads.
+The editor configuration protocol requires the first plugin release that
+includes it, or a later one. Before enabling it in a released adapter, require
+such a version and verify the version actually loaded by the host. A dependency
+range alone does not prove which copy tsserver loads.
 
 An older plugin interprets the envelope as a legacy configuration replacement
 and can reset project settings to defaults. Do not send the envelope to a host
 whose plugin version is unknown or unsupported. There is no version negotiation
-or capability query in this protocol. Use a local packed build or a release
-workflow snapshot for adapter development before the first supporting release.
+or capability query in this protocol.
 
 The host must support tsserver plugins and meet the
 [host requirements](usage.md#host-requirements). A compiler or language server
@@ -49,16 +47,17 @@ array. Import `StyledPluginEditorConfiguration` and
 `@styled/typescript-styled-plugin/api`; do not add protocol fields to the
 project's `StyledPluginConfigurationInput`.
 
-No `protocolVersion` or `source` field is required. Unknown envelope and editor
-configuration fields are logged and ignored; tsserver's `name` and `global`
-metadata are silently ignored. Unknown fields do not select a new behavior.
+Unknown envelope and editor configuration fields are logged and ignored;
+tsserver's `name` and `global` metadata are silently ignored. Unknown fields do
+not select a new behavior. The plugin reads the envelope only from
+`configurePlugin`: an `editorConfiguration` key in a project's own
+`tsconfig.json` plugin entry is ignored like any other unknown setting.
 
 ### Normalization
 
 The plugin keeps string entries, trims their ends, drops empty strings, and
 deduplicates in first-occurrence order. Matching is case-sensitive. Internal
-characters are preserved, and tags need not be JavaScript identifiers. There
-is no count, per-tag length, or total-length limit.
+characters are preserved, and tags need not be JavaScript identifiers.
 
 | Input `extraTags`                          | Result                                                |
 | ------------------------------------------ | ----------------------------------------------------- |

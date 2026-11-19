@@ -7,6 +7,7 @@ Map
 - docs/architecture.md: spec for request flow, substitution and virtual-document invariants, position mapping, completion merging, caching, configuration, public surface. Read before touching src/.
 - docs/tsserver-host.md: verified facts about tsserver plugin loading, supported TypeScript and Node versions, host runtimes, the decorator dependency, tag matching, and tsserver test-harness pitfalls.
 - docs/usage.md: user-facing configuration (tags, validation, lint, Emmet) and host requirements.
+- docs/editor-integration.md: contract for editor adapters that append tags at runtime through `configurePlugin` (payload, configuration state, adapter lifecycle, validation).
 - docs/maintenance.md: commands, project layout, focused tests, tsserver debugging, packaging, releases.
 - CHANGELOG.md: released, user-visible changes, assembled by the release workflow from `.changeset/`; never edited by hand.
 - .changeset/: one file per pending noteworthy change or fix, consumed by the next release (Git and releases, below).

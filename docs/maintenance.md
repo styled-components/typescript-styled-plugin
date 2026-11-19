@@ -333,17 +333,13 @@ Editor configuration protocol changes must cover both arrival orders in
 `test/e2e/scenarios/plugin-lifecycle.test.ts`: `configurePlugin` before the
 project opens, and after it opens. Keep a positive base-tag control beside any
 assertion that clearing or rejecting an overlay removes results. Public
-protocol type changes also run through `yarn test:package-api:consumers` so the
+protocol type changes also run through `pnpm test:package-api:consumers` so the
 minimum and current TypeScript declarations are checked.
 
-When changing overlay normalization or the shared listener `Set`, run the
-configuration unit tests and `test/e2e/scenarios/plugin-lifecycle.test.ts`. The
-lifecycle scenario proves that an effective runtime change refreshes diagnostics
-for open files, a no-op does not refresh them, multiple projects keep separate
-bases, and project reloads retain the shared dynamic state. Each effective change
-refreshes once per `ProjectService`, after all managers update. Closing a project
-removes all its managers from the shared store; reopening it applies the current
-dynamic configuration.
+When changing overlay normalization, project entry lookup, or the shared
+listener `Set`, run `test/unit/plugin-configuration.test.ts`,
+`test/unit/tsserver-plugin.test.ts`, and
+`test/e2e/scenarios/plugin-lifecycle.test.ts`.
 
 CI builds the package with the Node.js version in `.github/.node-version`, then
 verifies the resulting artifact on Node 22.12 and that version against the

@@ -260,9 +260,8 @@ An editor or extension can send settings at runtime through tsserver's
 leaves out returns to its default, not to the `tsconfig.json` value.
 
 Editor integrations can instead send an editor configuration envelope. Its
-`extraTags` are appended to each project's configured tags and a literal empty
-list removes the additions. The overlay does not change `validate`, `lint`, or
-`emmet`:
+`extraTags` are appended to each project's configured tags without changing
+`validate`, `lint`, or `emmet`:
 
 ```json
 {
@@ -274,39 +273,10 @@ list removes the additions. The overlay does not change `validate`, `lint`, or
 
 This envelope is a general integration protocol for editor extensions, language
 server adapters, and other tsserver hosts, not a setting to copy into
-`tsconfig.json`. Adapter authors should follow the
+`tsconfig.json`, where it is ignored. Adapter authors should follow the
 [editor integration protocol](editor-integration.md) for version requirements,
-payload construction, and configuration replay.
-
-One complete overlay is kept per tsserver project service, so a
-later valid envelope replaces the previous one. A host with multiple senders
-must coordinate them before sending.
-
-String entries are trimmed and stably deduplicated. Non-string and empty entries
-are skipped. A non-empty array whose every entry is skipped is invalid and keeps
-the previous dynamic state; it does not clear an existing overlay. Only
-`extraTags: []` explicitly clears the overlay. There is no protocol count or
-length limit.
-
-Extra tags use the same matching and parsing rules as project tags. Built-in
-special names such as `css`, `keyframes`, `createGlobalStyle`, `globalCss`, and
-`injectGlobal` retain their parsing behavior when enabled through `extraTags`.
-A custom name such as `globalStyle` enables CSS language features with ordinary
-component parsing, not global stylesheet parsing. Tag matching does not inspect
-imports or change syntax highlighting.
-
-Legacy runtime replacement and the editor overlay are mutually exclusive. A
-normal `configurePlugin` payload deactivates the overlay. A later valid editor
-envelope deactivates that runtime replacement, restores each project's
-`tsconfig.json` base, and then appends `extraTags`. This last-kind-wins rule keeps
-the result stable when a host restarts tsserver and replays its last valid plugin
-configuration. Invalid envelopes preserve the last valid overlay only in the
-current tsserver session; a host that persists configuration must not replace its
-stored last-valid payload with one that fails protocol validation.
-
-When a valid runtime configuration changes the effective settings, the plugin
-requests one diagnostic refresh per `ProjectService`, covering all its open
-files. Open files therefore update without waiting for the next edit.
+payload rules, and configuration replay; the plugin's handling of each payload
+kind is specified in [Architecture](architecture.md#configuration).
 
 ## Emmet completions
 
