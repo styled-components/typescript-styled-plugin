@@ -7,83 +7,82 @@ This document describes the local workflow for maintaining
 
 - The Node.js version in `.github/.node-version` for development and builds.
 - Node.js 14.21.3 or newer in the tsserver host at runtime, for both the plugin root and `./api` (docs/tsserver-host.md).
-- Corepack and the Yarn version declared in `package.json`'s `packageManager` field.
+- pnpm, installed by any route (Homebrew, `npm i -g pnpm`, or Corepack bundled with Node 24.12 through 24.x; Node 25 and later do not ship Corepack). `package.json`'s `packageManager` field pins the version. An installed pnpm 11.28.4 or newer, or any 12.x, switches itself to the pin; pnpm 10 cannot.
 - Git for contributing changes.
 
-Clone the repository, enable the package manager when necessary, and install
-the locked dependency graph:
+Clone the repository and install the locked dependency graph:
 
 ```bash
 git clone https://github.com/styled-components/typescript-styled-plugin.git
 cd typescript-styled-plugin
-corepack enable
-yarn install --immutable
+pnpm install --frozen-lockfile
 ```
 
-Without `corepack enable`, prefix every command with `corepack` instead
-(`corepack yarn install --immutable`, `corepack yarn verify`); the commands
-below are written in the shorter form. Dependencies' install scripts stay off
-through `enableScripts: false` in `.yarnrc.yml`, so no extra flag or
-environment variable is needed.
+`pnpm-workspace.yaml` holds the pnpm settings:
 
-The root workspace includes the dependencies used by the tsserver E2E fixtures.
-Do not install dependencies inside individual fixture directories.
+- `packages` lists the root and `test/e2e`, so one install covers the tsserver E2E fixtures. Do not install dependencies inside individual fixture directories.
+- `minimumReleaseAge` holds back freshly published versions.
+- `permissions` with `tsdown: skills: false` declines the agent skills tsdown ships, so they are neither linked into the repository's agent directories nor offered for approval on every install.
+- `saveExact` pins added dependencies to exact versions.
+- pnpm blocks dependencies' lifecycle scripts and fails an install that meets an unlisted one; `allowBuilds` lists the exceptions.
+
+The E2E TypeScript aliases `test/e2e/package.json` declares install under `test/e2e/node_modules/<alias>`, not at the repository root.
 
 ## Commands
 
 | Command                           | Purpose                                                                                                                                                              |
 | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `yarn compile`                    | Build the CommonJS tsserver entry and ESM API into `lib/`; also generates CJS types for `./api`.                                                                     |
-| `yarn watch:compile`              | Rebuild the package while source files change.                                                                                                                       |
-| `yarn pack:artifact`              | Build `lib/` (through `prepack`) and pack it to `package-artifact/package.tgz`, the tarball the package checks read.                                                 |
-| `yarn benchmark`                  | Measure per-feature latency, cache throughput, and retained-heap slope.                                                                                              |
-| `yarn format`                     | Apply formatting with `oxfmt`.                                                                                                                                       |
-| `yarn format:check`               | Check formatting without modifying files.                                                                                                                            |
-| `yarn lint`                       | Run `oxlint`.                                                                                                                                                        |
-| `yarn lint:fix`                   | Apply safe lint fixes.                                                                                                                                               |
-| `yarn typecheck`                  | Type-check source, scripts, and test code without emitting files.                                                                                                    |
-| `yarn test`                       | Run `test:unit` then `test:e2e`.                                                                                                                                     |
-| `yarn test:unit`                  | Run unit tests in `test/unit`.                                                                                                                                       |
-| `yarn test:e2e`                   | Rebuild and run the Node tsserver scenarios in `test/e2e/scenarios`.                                                                                                 |
-| `yarn test:e2e:run`               | Run E2E scenarios against the existing `lib/` build without rebuilding it.                                                                                           |
-| `yarn test:e2e:current`           | Rebuild, then run E2E scenarios against the `typescript-current` workspace alias.                                                                                    |
-| `yarn test:e2e:minimum`           | Rebuild, then run E2E scenarios against the minimum supported TypeScript workspace alias.                                                                            |
-| `yarn test:e2e:5.9`               | Rebuild, then run E2E scenarios against the `typescript-5.9` workspace alias.                                                                                        |
-| `yarn test:package-api`           | Load the packed tarball's root, `./api`, and deep subpaths through `require()` and `import()` (see Packaging below).                                                 |
-| `yarn test:package-api:consumers` | Type-check the built declarations in every consumer gate, each on its own TypeScript version; name gates to run only those (docs/architecture.md, "Public surface"). |
-| `yarn test:scaling`               | Fail on superlinear growth, a wrong result, or no real work in a hot operation, or cache memory past its bounds (see below).                                         |
-| `yarn test:pack`                  | Assert the exact file list of the packed tarball (see Packaging below).                                                                                              |
-| `yarn verify`                     | Run formatting, linting, type checking, all tests, and the package checks, building `lib/` once.                                                                     |
-| `yarn compare-release`            | Print every diagnostic, completion, hover, fold, and code fix that differs from a published release (see below).                                                     |
-| `yarn changeset`                  | Add a changeset describing a pending, noteworthy change (see Releases below).                                                                                        |
-| `yarn changeset-credits`          | List the git authors and co-authors behind each pending changeset.                                                                                                   |
-| `yarn changeset-version`          | Consume pending changesets: bump the version, write CHANGELOG.md, delete the changeset files. Run only by the release workflow.                                      |
-| `yarn changeset-publish`          | Build and publish the package to npm. Run only by the release workflow.                                                                                              |
+| `pnpm compile`                    | Build the CommonJS tsserver entry and ESM API into `lib/`; also generates CJS types for `./api`.                                                                     |
+| `pnpm watch:compile`              | Rebuild the package while source files change.                                                                                                                       |
+| `pnpm pack:artifact`              | Build `lib/` (through `prepack`) and pack it to `package-artifact/package.tgz`, the tarball the package checks read.                                                 |
+| `pnpm benchmark`                  | Measure per-feature latency, cache throughput, and retained-heap slope.                                                                                              |
+| `pnpm format`                     | Apply formatting with `oxfmt`.                                                                                                                                       |
+| `pnpm format:check`               | Check formatting without modifying files.                                                                                                                            |
+| `pnpm lint`                       | Run `oxlint`.                                                                                                                                                        |
+| `pnpm lint:fix`                   | Apply safe lint fixes.                                                                                                                                               |
+| `pnpm typecheck`                  | Type-check source, scripts, and test code without emitting files.                                                                                                    |
+| `pnpm test`                       | Run `test:unit` then `test:e2e`.                                                                                                                                     |
+| `pnpm test:unit`                  | Run unit tests in `test/unit`.                                                                                                                                       |
+| `pnpm test:e2e`                   | Rebuild and run the Node tsserver scenarios in `test/e2e/scenarios`.                                                                                                 |
+| `pnpm test:e2e:run`               | Run E2E scenarios against the existing `lib/` build without rebuilding it.                                                                                           |
+| `pnpm test:e2e:current`           | Rebuild, then run E2E scenarios against the `typescript-current` workspace alias.                                                                                    |
+| `pnpm test:e2e:minimum`           | Rebuild, then run E2E scenarios against the minimum supported TypeScript workspace alias.                                                                            |
+| `pnpm test:e2e:5.9`               | Rebuild, then run E2E scenarios against the `typescript-5.9` workspace alias.                                                                                        |
+| `pnpm test:package-api`           | Load the packed tarball's root, `./api`, and deep subpaths through `require()` and `import()` (see Packaging below).                                                 |
+| `pnpm test:package-api:consumers` | Type-check the built declarations in every consumer gate, each on its own TypeScript version; name gates to run only those (docs/architecture.md, "Public surface"). |
+| `pnpm test:scaling`               | Fail on superlinear growth, a wrong result, or no real work in a hot operation, or cache memory past its bounds (see below).                                         |
+| `pnpm test:pack`                  | Assert the exact file list of the packed tarball (see Packaging below).                                                                                              |
+| `pnpm verify`                     | Run formatting, linting, type checking, all tests, and the package checks, building `lib/` once.                                                                     |
+| `pnpm compare-release`            | Print every diagnostic, completion, hover, fold, and code fix that differs from a published release (see below).                                                     |
+| `pnpm changeset`                  | Add a changeset describing a pending, noteworthy change (see Releases below).                                                                                        |
+| `pnpm changeset-credits`          | List the git authors and co-authors behind each pending changeset.                                                                                                   |
+| `pnpm changeset-version`          | Consume pending changesets: bump the version, write CHANGELOG.md, delete the changeset files. Run only by the release workflow.                                      |
+| `pnpm changeset-publish`          | Build and publish the package to npm. Run only by the release workflow.                                                                                              |
 
-Run `yarn verify` before opening a pull request. It is the release-oriented
+Run `pnpm verify` before opening a pull request. It is the release-oriented
 local gate and the closest equivalent to the CI workflow.
 
 ## Running tests
 
-Only composite commands build: `yarn verify`, `yarn test:e2e` (and its
-`:minimum`, `:5.9`, `:current` forms), `yarn pack:artifact`, and every
-`yarn pack` through the `prepack` lifecycle. Every other check reads what is
-already on disk: `yarn test:e2e:run`, `yarn test:package-api:consumers`, and
-`yarn compare-release` read `lib/` (run `yarn compile`), while
-`yarn test:package-api` and `yarn test:pack` read
-`package-artifact/package.tgz` (run `yarn pack:artifact`). Each of the last
+Only composite commands build: `pnpm verify`, `pnpm test:e2e` (and its
+`:minimum`, `:5.9`, `:current` forms), `pnpm pack:artifact`, and every
+`pnpm pack` through the `prepack` lifecycle. Every other check reads what is
+already on disk: `pnpm test:e2e:run`, `pnpm test:package-api:consumers`, and
+`pnpm compare-release` read `lib/` (run `pnpm compile`), while
+`pnpm test:package-api` and `pnpm test:pack` read
+`package-artifact/package.tgz` (run `pnpm pack:artifact`). Each of the last
 four fails with a message naming that command when its input is missing.
 After a source change, rebuild before running one of them alone, since a
-stale build passes as current (only `yarn compare-release` compares
+stale build passes as current (only `pnpm compare-release` compares
 modification times).
 
-`yarn verify` builds once, through `yarn pack:artifact`, and runs every check
-that reads `lib/` or the tarball after it. `yarn changeset-publish` builds
-once, through the `prepack` lifecycle of the `yarn npm publish` it runs.
+`pnpm verify` builds once, through `pnpm pack:artifact`, and runs every check
+that reads `lib/` or the tarball after it. `pnpm changeset-publish` builds
+once, through the `prepack` lifecycle of the `pnpm publish` it runs.
 
 Every `test:e2e*` script rebuilds the same `lib/` directory, so running two of
 them at once (checking two TypeScript aliases side by side, for example) races
-on that rebuild: one run's `yarn compile` can overwrite `lib/` while the other
+on that rebuild: one run's `pnpm compile` can overwrite `lib/` while the other
 run's tsserver instances are loading it, producing a build mismatch rather
 than a clean failure. Each run's tsserver logs go to their own directory
 (`test/e2e/tsserver-fixture/clear-logs.ts`, keyed by the vitest process's
@@ -102,7 +101,7 @@ harness to report a process-exit timeout from an `onTestFinished` cleanup
 before Vitest's generic hook timeout. Vitest's own `testTimeout` cannot stop a
 test stuck in a synchronous loop, since its timer runs on the same blocked
 thread, so
-`yarn test:unit` and `yarn test:e2e:run` each run through
+`pnpm test:unit` and `pnpm test:e2e:run` each run through
 `scripts/with-deadline.ts` instead of calling Vitest directly (the deadline
 each passes it is set where package.json invokes the wrapper). The wrapper
 starts Vitest as the leader of its own process group and, once the run's
@@ -123,7 +122,7 @@ which type stripping alone rejects.
 
 ## Performance baseline
 
-Run `yarn benchmark` to execute
+Run `pnpm benchmark` to execute
 `test/performance/template-language-service.bench.ts` with Node's native
 TypeScript transform and explicit garbage collection. It prints a table of
 latency and throughput for completions, diagnostics, hover, and folding on
@@ -144,7 +143,7 @@ compare the two runs directly, rather than against a number in this document.
 
 ## Scaling guardrail
 
-`yarn test:scaling` (`test/performance/scaling-check.ts`, wired into `yarn
+`pnpm test:scaling` (`test/performance/scaling-check.ts`, wired into `pnpm
 verify` and CI) times each hot operation (substitution, diagnostics, folding,
 hover, completions, code fixes) at N and 4N, alternating the two sizes and
 taking the minimum of several samples per size, and fails when time(4N)/time(N)
@@ -181,7 +180,7 @@ validation cache's byte budget can hold, through
 `StyledTemplateLanguageService.getSemanticDiagnostics` and fails if the heap
 retained afterward exceeds a threshold derived from that byte budget
 (`src/features/diagnostics.ts`, docs/architecture.md, Caching). It needs
-`--expose-gc` and `--no-flush-bytecode`, which `yarn test:scaling` passes; a
+`--expose-gc` and `--no-flush-bytecode`, which `pnpm test:scaling` passes; a
 run without either fails before any check starts. Without the second, V8
 flushes the bytecode of idle functions after a number of collections that
 varies from run to run, which moves the retained-heap reading by megabytes. A
@@ -211,13 +210,13 @@ per-check deadline above unchanged. A substring that matches nothing fails
 loudly, listing every check's name, rather than silently running zero checks:
 
 ```bash
-corepack yarn test:scaling --filter 'JavaScript escape'
-corepack yarn test:scaling --filter 'retained-heap guardrail'
+pnpm test:scaling --filter 'JavaScript escape'
+pnpm test:scaling --filter 'retained-heap guardrail'
 ```
 
 ## Comparing with a release
 
-`yarn compare-release` (`scripts/compare-release.ts`) runs the same templates
+`pnpm compare-release` (`scripts/compare-release.ts`) runs the same templates
 through the working build in `lib/` and a published release (1.0.1 unless
 `--version` names another), each loaded as a tsserver plugin inside an
 in-memory TypeScript language service, and prints what differs. Use it to
@@ -226,10 +225,10 @@ where intended, and to find shapes where the release already behaved
 differently from the working build.
 
 ```bash
-yarn compile
-yarn compare-release                                   # the default cases
-yarn compare-release path/to/cases.mjs --all           # every case, differing or not
-yarn compare-release cases.mjs --filter '^(?!huge)'    # only cases whose name matches
+pnpm compile
+pnpm compare-release                                   # the default cases
+pnpm compare-release path/to/cases.mjs --all           # every case, differing or not
+pnpm compare-release cases.mjs --filter '^(?!huge)'    # only cases whose name matches
 ```
 
 - Cases: a module whose default export is an array of
@@ -268,7 +267,7 @@ yarn compare-release cases.mjs --filter '^(?!huge)'    # only cases whose name m
 - `test/e2e/tsserver-fixture/`: the tsserver process harness.
 - `test/e2e/*-project-fixture/`: fixture projects used by E2E scenarios.
 - `test/performance/`: `scaling-check.ts` (see Scaling guardrail below) and its pure CLI helpers in `scaling-check-cli.ts` (`--filter` parsing, per-check progress tracking, both covered by `test/unit/scaling-check-cli.test.ts`); `template-language-service.bench.ts` and its shared fixtures in `template-language-service-fixture.ts` (see Performance baseline below); a standalone, flag-run memory probe with no build step, `validation-cache-key-flattening-probe.mjs` (the diagnostics validation cache's key, `buildValidationCacheKey` in `src/features/diagnostics.ts`), runnable directly with `node --expose-gc <path>` and self-checking against a held-forever control before trusting its own reading.
-- `scripts/`: the changelog generator, the pack-contents check, the consumer type gate runner, changeset credits, the compare-release sensor, `bounded-worker.ts`, which runs plugin code for the scaling check, the benchmark, and compare-release in a worker thread with a deadline and a heap cap, `kill-group.ts`, the POSIX process-group signaling `with-deadline.ts` uses (split out so a test can exercise it without triggering that file's own CLI entry point), and `with-deadline.ts`, which gives `yarn test:unit` and `yarn test:e2e:run` a whole-run wall-clock deadline (see [Running tests](#running-tests)).
+- `scripts/`: the changelog generator, the pack-contents check, the consumer type gate runner, changeset credits, the compare-release sensor, `bounded-worker.ts`, which runs plugin code for the scaling check, the benchmark, and compare-release in a worker thread with a deadline and a heap cap, `kill-group.ts`, the POSIX process-group signaling `with-deadline.ts` uses (split out so a test can exercise it without triggering that file's own CLI entry point), and `with-deadline.ts`, which gives `pnpm test:unit` and `pnpm test:e2e:run` a whole-run wall-clock deadline (see [Running tests](#running-tests)).
 - `lib/`: generated build output; never edit it manually.
 
 E2E tests load the compiled `lib/` package; see [Running tests](#running-tests)
@@ -276,15 +275,15 @@ for when that build needs a rebuild.
 
 ## Focused tests and tsserver debugging
 
-Run a single unit or E2E scenario through Yarn so the workspace-provided
-Vitest binary and configuration loader are used, through the same deadline
-wrapper `yarn test:unit` and `yarn test:e2e:run` use (raise the deadline with
-`WITH_DEADLINE_MS` to keep a debugger attached to the one file past the
-default):
+Run a single unit or E2E scenario through `pnpm exec` so the project's
+Vitest binary is on `PATH` (the wrapper spawns `vitest` by name), through the
+same deadline wrapper `pnpm test:unit` and `pnpm test:e2e:run` use (raise the
+deadline with `WITH_DEADLINE_MS` to keep a debugger attached to the one file
+past the default):
 
 ```bash
-yarn node --experimental-strip-types scripts/with-deadline.ts 60000 -- vitest run test/unit/plugin-configuration.test.ts --configLoader runner
-yarn compile && yarn node --experimental-strip-types scripts/with-deadline.ts 300000 -- vitest run test/e2e/scenarios/completions.test.ts --configLoader runner
+pnpm exec node --experimental-strip-types scripts/with-deadline.ts 60000 -- vitest run test/unit/plugin-configuration.test.ts --configLoader runner
+pnpm compile && pnpm exec node --experimental-strip-types scripts/with-deadline.ts 300000 -- vitest run test/e2e/scenarios/completions.test.ts --configLoader runner
 ```
 
 E2E scenarios drive a real tsserver through `test/e2e/tsserver-fixture/`'s
@@ -317,7 +316,7 @@ server, from disk directly.
 The only runtime call into `typescript-template-language-service-decorator` is
 in `src/tsserver/tsserver-plugin.ts`. Keep that integration direct until a
 confirmed compatibility defect requires a local adapter. Changes at this
-boundary must run `yarn test:e2e:current`; the lifecycle and syntax scenarios
+boundary must run `pnpm test:e2e:current`; the lifecycle and syntax scenarios
 verify plugin loading, configured tag matching, and tag configuration updates
 through a real tsserver host at the `typescript-current` alias version
 (`test/e2e/package.json`).
@@ -334,21 +333,21 @@ CI builds the package with the Node.js version in `.github/.node-version`, then
 verifies the resulting artifact on Node 22.12 and that version against the
 TypeScript versions listed in the e2e matrix
 of `.github/workflows/ci.yml` (the supported floor through the current
-release); `yarn verify` only runs the e2e suite once, against the default
-TypeScript version, so run `yarn test:e2e:minimum`, `yarn test:e2e:5.9`, and
-`yarn test:e2e:current` locally too before relying on `verify` alone for a
+release); `pnpm verify` only runs the e2e suite once, against the default
+TypeScript version, so run `pnpm test:e2e:minimum`, `pnpm test:e2e:5.9`, and
+`pnpm test:e2e:current` locally too before relying on `verify` alone for a
 change near the supported TypeScript range. The vitest-based E2E suite cannot
 run on this package's own Node floor, 14.21.3 (docs/tsserver-host.md): vitest
 declares a newer `engines.node` than that. A separate CI job
 (`tsserver-smoke-floor`) drives a real tsserver directly with
 `test/package-api/tsserver-smoke.cjs`, a plain-CommonJS script with no
 build-tool dependency, against the packed
-tarball on that floor Node; `yarn verify` does not run this job. Reproduce it
-locally in two steps. Pack with the development Node, since Yarn 4 itself
-requires Node 18.12 or newer:
+tarball on that floor Node; `pnpm verify` does not run this job. Reproduce it
+locally in two steps. Pack with the development Node, since `prepack` builds
+with tsdown, whose `engines.node` excludes the floor Node:
 
 ```bash
-yarn pack:artifact
+pnpm pack:artifact
 ```
 
 Then run the smoke script with a Node 14.21.3 binary specifically on `PATH`
@@ -358,7 +357,7 @@ development Node instead proves nothing about it; a version manager such as
 `fnm install 14.21.3 && fnm use 14.21.3` selects one):
 
 ```bash
-node test/package-api/tsserver-smoke.cjs package-artifact/package.tgz node_modules/typescript-minimum
+node test/package-api/tsserver-smoke.cjs package-artifact/package.tgz test/e2e/node_modules/typescript-minimum
 ```
 
 Neither job establishes compatibility with a specific editor. Before claiming
@@ -368,27 +367,30 @@ the package requirements and that it can load the plugin through the normal
 
 ## Packaging and pull requests
 
-`package.json` publishes only `lib/`; runtime dependencies are installed by npm
+`package.json` publishes `lib/` and `CHANGELOG.md` (its `files` field), and
+`pnpm pack` always adds `LICENSE.txt`, `README.md`, and `package.json` from the
+root; runtime dependencies are installed by npm
 from the package's `dependencies`. The `prepack` lifecycle rebuilds `lib/`
 before every tarball is created, including on a dry run, and tsdown empties
-`lib/` before each build, so a tarball never carries a stale file: Yarn's
-`enableScripts: false` disables dependencies' install scripts, not this
-package's own `prepack`. Every tarball this repository builds, in CI and in
-tests, comes from `yarn pack`, the packer `yarn npm publish` uses, through
-`yarn pack:artifact`. The package API test (`test/package-api/runtime.ts`)
+`lib/` before each build, so a tarball never carries a stale file: pnpm's
+block on dependencies' lifecycle scripts does not apply to this package's own
+`prepack`. Every tarball this repository builds, in CI and in
+tests, comes from `pnpm pack`, the packer `pnpm publish` uses, through
+`pnpm pack:artifact`. The package API test (`test/package-api/runtime.ts`)
 extracts that tarball into a throwaway project and loads the synchronous
 tsserver entry and the ESM API from it, each through both `require()` and
 `import()`. Inspect the release contents with:
 
 ```bash
-yarn pack --dry-run
+pnpm pack --dry-run
 ```
 
-`yarn test:pack` (`scripts/check-pack-contents.ts`, wired into `yarn verify`
+`pnpm test:pack` (`scripts/check-pack-contents.ts`, wired into `pnpm verify`
 and CI) lists the same tarball and fails listing every missing and
 unexpected file. It expects every path `package.json` points a consumer at
-(`main`, `types`, `exports`, `typesVersions`), plus the build-hook files and
-the root files Yarn always packs, both listed in the script. A `files` glob or
+(`main`, `types`, `exports`, `typesVersions`), plus the build-hook files, the
+root files pnpm always packs, and the root files `files` names, all listed in
+the script. A `files` glob or
 negation, or an `exports` or `typesVersions` wildcard pattern, fails the check
 with a message naming it, since the script compares literal paths only.
 
@@ -399,18 +401,15 @@ against this repository. All contributors must follow the
 
 ## Releases
 
-`package.json`'s `workspaces` field lists `.` alongside `test/e2e`. Without
-that entry, `@changesets/cli`'s workspace detection (`@manypkg/get-packages`)
-treats the presence of any `workspaces` field as turning this into a
-monorepo, and stops treating the root package as a package at all, so every
-changesets command fails with "which is not in the workspace". Listing `.` as
-a workspace member fixes that without changing how `test/e2e` itself
-installs or links against the root package.
+`@changesets/cli` 3 detects pnpm through `pnpm-workspace.yaml`. A `workspaces`
+field in `package.json` together with a `yarn.lock` would force the Yarn path,
+so the repository has neither. The `.` entry in `pnpm-workspace.yaml`'s
+`packages` keeps the root package visible to changesets.
 
 Every noteworthy change or fix ships with a changeset:
 
 ```bash
-corepack yarn changeset
+pnpm changeset
 ```
 
 This prompts for a bump type (patch or minor; use major only for an
@@ -421,7 +420,7 @@ first-person, matching the tone of the existing `.changeset/*.md` files.
 Before crediting anyone by name, run:
 
 ```bash
-corepack yarn changeset-credits
+pnpm changeset-credits
 ```
 
 This lists the git authors and co-authors behind every pending changeset, so a
@@ -469,26 +468,23 @@ a contribution needs to touch:
    `npm stage publish` by default, and the release workflow publishes
    directly rather than staging a release for later approval.
 
-The release workflow publishes with `yarn npm publish`, which performs that
-exchange against the registry in `package.json`'s `publishConfig.registry`
-(`https://registry.npmjs.org`) rather than Yarn's default,
-`registry.yarnpkg.com`, which forwards to npm. Until the trusted publisher is
-configured with direct publishing allowed, the publish step fails with an
-authentication error; it is not something a change to this repository's code
-can fix.
+The release workflow publishes with `pnpm publish`, which is native (no npm
+CLI behind it) and performs that exchange itself, so the workflow needs no
+`NPM_TOKEN` and no `registry-url` (the reason is on its setup step). Until the
+trusted publisher is configured with direct publishing allowed, the publish step fails
+with an authentication error; it is not something a change to this
+repository's code can fix.
 
-CI releases carry npm provenance: the release workflow sets Yarn's
-`npmPublishProvenance` setting (as `YARN_NPM_PUBLISH_PROVENANCE`), so each
-published version links to the workflow run that built it. Yarn signs the
-provenance statement before it contacts the registry, with no fallback, so a
-release requires:
+CI releases carry npm provenance: the release workflow sets pnpm's
+`provenance` setting through its environment form `PNPM_CONFIG_PROVENANCE`
+(`NPM_CONFIG_PROVENANCE` has no effect), so each published version links to the workflow run
+that built it. pnpm signs the provenance statement before the registry upload,
+so a release requires:
 
-- the `id-token: write` permission in `release.yml` (without it, Yarn stops
-  with "Provenance generation in GitHub Actions requires "write" access to the
-  "id-token" permission");
+- the `id-token: write` permission in `release.yml`;
 - a runner that reaches Sigstore's certificate authority, Fulcio
   (`https://fulcio.sigstore.dev`), and its transparency log, Rekor
-  (`https://rekor.sigstore.dev`), the default endpoints Yarn calls.
+  (`https://rekor.sigstore.dev`).
 
 When Sigstore is unavailable, the publish step fails before anything reaches
 npm, in either the `release` or the `prerelease` job (both publish with
