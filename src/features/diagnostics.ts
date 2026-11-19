@@ -180,7 +180,6 @@ export class DiagnosticsFeature {
           document,
           stylesheet,
           this.keyframeLintSettings(),
-          diagnostics,
         )
         if (propertyDiagnostics.length > 0) {
           diagnostics = [...diagnostics, ...propertyDiagnostics]
@@ -411,7 +410,6 @@ function keyframePropertyDiagnostics(
   document: TextDocument,
   stylesheet: unknown,
   lint: StyledPluginConfiguration['lint'],
-  existing: readonly Diagnostic[],
 ): Diagnostic[] {
   const unknownLevel = reportedLintLevel(lintLevel(lint, 'unknownProperties', 'warning'))
   const vendorLevel = reportedLintLevel(
@@ -426,7 +424,6 @@ function keyframePropertyDiagnostics(
   }
   const known = knownCssProperties()
   const valid = validPropertyNames(lint)
-  let reported: Set<string> | undefined
   const added: Diagnostic[] = []
   for (const selector of keyframeSelectors(stylesheet)) {
     if (!insideStandardKeyframe(selector, text)) {
@@ -449,16 +446,9 @@ function keyframePropertyDiagnostics(
         unknownLevel,
         vendorLevel,
       )
-      if (!diagnostic) {
-        continue
+      if (diagnostic) {
+        added.push(diagnostic)
       }
-      reported ??= new Set(existing.map(diagnosticIdentity))
-      const identity = diagnosticIdentity(diagnostic)
-      if (reported.has(identity)) {
-        continue
-      }
-      reported.add(identity)
-      added.push(diagnostic)
     }
   }
   return added
@@ -490,7 +480,7 @@ function declarationDiagnostic(
   }
   const fullName = writtenName.toLowerCase()
   if (fullName.startsWith('-')) {
-    if (fullName.startsWith('--') || vendorLevel === undefined) {
+    if (vendorLevel === undefined) {
       return undefined
     }
     if (known.has(fullName) || valid.has(fullName)) {
@@ -698,11 +688,6 @@ function lintLevel(
 
 function reportedLintLevel(level: LintLevel): ReportedLintLevel | undefined {
   return level === 'ignore' ? undefined : level
-}
-
-function diagnosticIdentity(diagnostic: Diagnostic): string {
-  const { end, start } = diagnostic.range
-  return `${diagnostic.code ?? ''}\u0000${diagnostic.message}\u0000${start.line}:${start.character}:${end.line}:${end.character}`
 }
 
 /** Same code, message, and range: one diagnostic under both readings of a single-identifier fragment. */

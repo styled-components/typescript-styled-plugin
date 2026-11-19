@@ -289,8 +289,30 @@ describe('unknown properties inside keyframes', () => {
       ['an empty template', ''],
       ['whitespace', '  \n  '],
       ['an empty block', '0% { }'],
-    ])('should report nothing for %s in a keyframes tag', (_label, text) => {
-      assert.deepEqual(shownDiagnostics(text, 'keyframes'), [])
+    ])(
+      'should report nothing for %s in a keyframes tag, and still report the control',
+      (_label, text) => {
+        assert.deepEqual(shownDiagnostics(text, 'keyframes'), [])
+        assertUnknownOnly(`${text}\n100% { colr: 0; }`, 'keyframes', 'colr')
+      },
+    )
+
+    it('should report nothing in a vendor-prefixed rule beside a standard rule, and still report the standard one', () => {
+      const text =
+        '@keyframes a { 0% { opacitty: 0; } }\n@-webkit-keyframes b { 0% { opacitty: 0; } }'
+      assert.deepEqual(shownDiagnostics(text, 'styled.div'), [
+        {
+          length: '@-webkit-keyframes'.length,
+          messageText: "Always define standard rule '@keyframes' when defining keyframes.",
+          start: text.indexOf('@-webkit-keyframes'),
+        },
+        unknownProperty(text),
+      ])
+    })
+
+    it('should report nothing for a trailing-underscore Less merge, and still report a misspelling', () => {
+      const text = '0% { opacity_: 0; opacitty: 1; }'
+      assert.deepEqual(shownDiagnostics(text, 'keyframes'), [unknownProperty(text)])
     })
 
     it('should report a from selector outside @keyframes once', () => {
@@ -418,6 +440,22 @@ describe('unknown properties inside keyframes', () => {
       manager.updateFromPluginConfig({ lint: { unknownVendorSpecificProperties: 'warning' } })
       const name = '-webkit-opacitty'
       const text = `0% { ${name}: 0; }`
+      assert.deepEqual(shownDiagnostics(text, 'keyframes', manager), [
+        {
+          length: name.length,
+          messageText: 'Unknown vendor specific property.',
+          start: text.indexOf(name),
+        },
+      ])
+    })
+
+    it('should suppress a listed vendor-prefixed property and still report an unlisted one', () => {
+      const manager = new PluginConfigurationManager()
+      manager.updateFromPluginConfig({
+        lint: { unknownVendorSpecificProperties: 'warning', validProperties: ['-webkit-listed'] },
+      })
+      const name = '-webkit-unlisted'
+      const text = `0% { -webkit-listed: 0; ${name}: 0; }`
       assert.deepEqual(shownDiagnostics(text, 'keyframes', manager), [
         {
           length: name.length,
