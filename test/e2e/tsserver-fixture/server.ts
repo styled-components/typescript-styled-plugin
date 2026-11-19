@@ -103,7 +103,7 @@ export class TSServer {
     const runId = process.env.TSSERVER_FIXTURE_RUN_ID
     if (runId === undefined) {
       throw new Error(
-        'TSSERVER_FIXTURE_RUN_ID is not set: the e2e globalSetup (test/e2e/tsserver-fixture/clear-logs.ts) sets it. Run e2e scenarios through the e2e vitest project, for example `corepack yarn test:e2e`.',
+        'TSSERVER_FIXTURE_RUN_ID is not set: the e2e globalSetup (test/e2e/tsserver-fixture/clear-logs.ts) sets it. Run e2e scenarios through the e2e vitest project, for example `pnpm test:e2e`.',
       )
     }
     const logDirectory = path.join(import.meta.dirname, 'logs', runId)

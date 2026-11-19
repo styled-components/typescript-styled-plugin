@@ -58,7 +58,7 @@ function main(): void {
   if (heading !== expectedHeading) {
     console.error(
       `prerelease-notes: the newest section in ${changelogPath} is headed "${heading}", which ` +
-        `does not match "${expectedHeading}" from ${packageJsonPath}. Run "corepack yarn ` +
+        `does not match "${expectedHeading}" from ${packageJsonPath}. Run "pnpm ` +
         'changeset-version" (or "changeset version --snapshot") again so the changelog and ' +
         'package.json agree before publishing.',
     )

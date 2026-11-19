@@ -36,9 +36,9 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup
       - name: Formatting
-        run: yarn format:check
+        run: pnpm format:check
       - name: Linting
-        run: yarn lint
+        run: pnpm lint
   compile:
     name: Compile and Typecheck
     runs-on: ubuntu-24.04
@@ -50,14 +50,14 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup
       - name: Type checking
-        run: yarn typecheck
+        run: pnpm typecheck
       # The only build in this workflow: prepack compiles lib/ before packing.
       - name: Compile and pack
-        run: yarn pack:artifact
+        run: pnpm pack:artifact
       - name: Package API types
-        run: yarn test:package-api:consumers
+        run: pnpm test:package-api:consumers
       - name: Package contents
-        run: yarn test:pack
+        run: pnpm test:pack
       - name: Upload packed package
         uses: actions/upload-artifact@v7
         with:
@@ -82,9 +82,9 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup
-      - run: yarn test:unit
+      - run: pnpm test:unit
       - name: Scaling guardrail
-        run: yarn test:scaling
+        run: pnpm test:scaling
   e2e:
     name: E2E (${{ matrix.name }})
     runs-on: ubuntu-24.04
@@ -128,9 +128,9 @@ jobs:
           path: package-artifact
       - name: Test packed package runtime
         if: matrix.test-package-runtime
-        run: yarn test:package-api package-artifact/*.tgz
+        run: pnpm test:package-api package-artifact/*.tgz
       - name: Run tsserver scenarios
-        run: yarn test:e2e:run
+        run: pnpm test:e2e:run
         env:
           TSSERVER_TYPESCRIPT_PACKAGE: ${{ matrix.typescript-package }}
   tsserver-smoke-floor:
@@ -159,7 +159,7 @@ jobs:
           node-version: 14.21.3
           package-manager-cache: false
       - name: Real tsserver smoke test on the Node floor
-        run: node test/package-api/tsserver-smoke.cjs package-artifact/*.tgz node_modules/typescript-minimum
+        run: node test/package-api/tsserver-smoke.cjs package-artifact/*.tgz test/e2e/node_modules/typescript-minimum
   tsserver-smoke-legacy-typescript:
     # TypeScript below 5.0 (isSupportedTypeScriptVersion, src/tsserver/tsserver-plugin.ts) never
     # activates the plugin, for the reason recorded in docs/tsserver-host.md ("TypeScript
@@ -182,6 +182,6 @@ jobs:
           name: package-tarball
           path: package-artifact
       - name: Real tsserver smoke test on TypeScript 4.9.5
-        run: node test/package-api/tsserver-smoke.cjs package-artifact/*.tgz node_modules/typescript-legacy
+        run: node test/package-api/tsserver-smoke.cjs package-artifact/*.tgz test/e2e/node_modules/typescript-legacy
         env:
           TSSERVER_SMOKE_MODE: inactive

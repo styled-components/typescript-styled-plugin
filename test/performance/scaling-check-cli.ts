@@ -19,7 +19,7 @@ export function parseFilterArgument(argv: readonly string[]): string | undefined
   const value = argv[flagIndex + 1]
   if (value === undefined) {
     throw new Error(
-      `${FILTER_FLAG} needs a value: \`corepack yarn test:scaling ${FILTER_FLAG} <substring>\`.`,
+      `${FILTER_FLAG} needs a value: \`pnpm test:scaling ${FILTER_FLAG} <substring>\`.`,
     )
   }
   return value

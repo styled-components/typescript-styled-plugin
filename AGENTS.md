@@ -16,12 +16,12 @@ Map
 
 Commands
 
-- Package manager: Yarn 4 through corepack (`corepack yarn ...`); setup and install in docs/maintenance.md, "Requirements".
-- `corepack yarn verify` runs format check, lint (warnings fail), typecheck, unit, e2e (default TypeScript version), scaling, package API, pack contents (`yarn test:pack`). CI additionally gates on the TypeScript e2e matrix (`corepack yarn test:e2e:minimum`, `:5.9`, `:current`) and a Node-floor tsserver smoke job (docs/maintenance.md, "Testing changes"); run both locally before relying on a passing `verify` alone for a change near that boundary.
+- Package manager: pnpm, pinned by package.json `packageManager`; setup and install in docs/maintenance.md, "Requirements".
+- `pnpm verify` runs format check, lint (warnings fail), typecheck, unit, e2e (default TypeScript version), scaling, package API, pack contents (`pnpm test:pack`). CI additionally gates on the TypeScript e2e matrix (`pnpm test:e2e:minimum`, `:5.9`, `:current`) and a Node-floor tsserver smoke job (docs/maintenance.md, "Testing changes"); run both locally before relying on a passing `verify` alone for a change near that boundary.
 - Only composite commands build (`verify`, `test:e2e*`, `pack:artifact`); every other check reads the existing lib/ or packed tarball (docs/maintenance.md, "Running tests").
 - e2e against another TypeScript: set `TSSERVER_TYPESCRIPT_PACKAGE` to an alias declared in test/e2e/package.json.
-- `corepack yarn benchmark` prints completion/diagnostics/hover/folding latency and retained-heap slopes (KB per iteration between settle points, with a no-op and a deliberate-leak control).
-- `corepack yarn compare-release [cases...]` prints the diagnostics, completions, hovers, folds, and code fixes that differ between `lib/` and a published release (docs/maintenance.md, "Comparing with a release").
+- `pnpm benchmark` prints completion/diagnostics/hover/folding latency and retained-heap slopes (KB per iteration between settle points, with a no-op and a deliberate-leak control).
+- `pnpm compare-release [cases...]` prints the diagnostics, completions, hovers, folds, and code fixes that differ between `lib/` and a published release (docs/maintenance.md, "Comparing with a release").
 
 Rules
 
@@ -46,7 +46,7 @@ Correctness and types
 - Never call `TemplateContext.toOffset` or `toPosition` with a value outside the template (tsserver asserts on closed files).
 - Substitution output keeps the input length exactly; mapping never relies on the substituted text's line breaks (docs/architecture.md).
 - Public surface (package root factory, `./api` exports, emitted `.d.ts`) is backward compatible or ships in a `major` changeset that states the break. Internal code may be rewritten freely.
-- Emitted declarations must compile under `skipLibCheck: false` on the minimum and maximum supported TypeScript, plus two versions in between, and under `moduleResolution: node10` and `bundler`; `corepack yarn test:package-api:consumers` runs every gate, one `test/package-api/tsconfig.consumers.<gate>.json` each, so adding a TypeScript version means adding one tsconfig (docs/architecture.md, "Public surface").
+- Emitted declarations must compile under `skipLibCheck: false` on the minimum and maximum supported TypeScript, plus two versions in between, and under `moduleResolution: node10` and `bundler`; `pnpm test:package-api:consumers` runs every gate, one `test/package-api/tsconfig.consumers.<gate>.json` each, so adding a TypeScript version means adding one tsconfig (docs/architecture.md, "Public surface").
 - Version support covers what the last release demonstrably ran on, plus newer hosts; never widen support backward to a host the last release did not actually work on, even when its code gate admitted it (docs/tsserver-host.md records the measured floors). A host below the floor gets a logged message and an untouched language service.
 - 1.0.1's deep-import surface (no `exports` map at all) is a compatibility floor, not a spec: a new subpath keeps resolving the way it did in 1.0.1 (`./lib/index`, `./lib/index.js`, `./lib/api`, `./lib/api.js`), or the removal ships in a `major` changeset.
 
@@ -74,22 +74,22 @@ Comments
 
 Security and supply chain
 
-- Package lifecycle scripts stay disabled; enable one only for demonstrated breakage with a one-line justification.
-- Yarn's `npmMinimalAgeGate` holds back freshly published versions; do not bypass it.
+- Dependency lifecycle scripts stay blocked; allow one through `allowBuilds` in pnpm-workspace.yaml only for demonstrated breakage with a one-line justification.
+- pnpm-workspace.yaml's `minimumReleaseAge` holds back freshly published versions; do not bypass it.
 - Lockfile changes accompany every dependency change and are verified by a full test run.
 - No new runtime dependency without need; runtime dependencies must be CommonJS-loadable or bundled, with no top-level await (docs/tsserver-host.md).
 
 Performance
 
-- Completion and hover run per keystroke. Validate hot-path changes with `corepack yarn benchmark` before and after, with a realistic `TemplateContext` fixture; a slowdown is a regression.
+- Completion and hover run per keystroke. Validate hot-path changes with `pnpm benchmark` before and after, with a realistic `TemplateContext` fixture; a slowdown is a regression.
 - The happy path does not pay for edge cases: handling for a rare input shape runs only after a cheap check proves that shape is present, so a template without it costs the same as before the handling existed. Show it with a before-and-after benchmark on templates without the shape.
 - Do not record measured numbers in docs; state the command that prints them.
-- No per-result or per-placeholder work proportional to template length (a per-placeholder slice from the line start, a per-diagnostic line-map rebuild). A multi-entry cache keyed by template text copies the key (docs/architecture.md, Caching), never stores a slice of the source string, and is bounded by total size, not only entry count (every keystroke adds a distinct key). `corepack yarn test:scaling` (`test/performance/scaling-check.ts`) gates superlinear time, wrong results, implausibly flat timing, and retained memory in CI (docs/maintenance.md, "Scaling guardrail"); add a check there for a new hot operation or cache.
+- No per-result or per-placeholder work proportional to template length (a per-placeholder slice from the line start, a per-diagnostic line-map rebuild). A multi-entry cache keyed by template text copies the key (docs/architecture.md, Caching), never stores a slice of the source string, and is bounded by total size, not only entry count (every keystroke adds a distinct key). `pnpm test:scaling` (`test/performance/scaling-check.ts`) gates superlinear time, wrong results, implausibly flat timing, and retained memory in CI (docs/maintenance.md, "Scaling guardrail"); add a check there for a new hot operation or cache.
 
 Git and releases
 
-- Noteworthy changes and bugfixes get a changeset (`corepack yarn changeset`). Changeset bodies use declarative release-note voice (what changed, for whom), never first-person "I", and no conventional-commit prefixes. Match the tone of existing `.changeset/*.md` entries.
-- Before crediting anyone in a changeset, derive the list rather than recalling it: `corepack yarn changeset-credits [name]` reports every commit author and co-author who introduced or edited that changeset file, pending or already released.
+- Noteworthy changes and bugfixes get a changeset (`pnpm changeset`). Changeset bodies use declarative release-note voice (what changed, for whom), never first-person "I", and no conventional-commit prefixes. Match the tone of existing `.changeset/*.md` entries.
+- Before crediting anyone in a changeset, derive the list rather than recalling it: `pnpm changeset-credits [name]` reports every commit author and co-author who introduced or edited that changeset file, pending or already released.
 - Version bumps and npm publishing happen only through the release workflow (`.github/workflows/release.yml`), from accumulated changesets, including the snapshot builds its `prerelease` job publishes to the npm `test` dist-tag on every push to `main` with pending changesets (docs/maintenance.md, "Releases"); contributions leave `version` alone and never publish by hand.
 - `scripts/changelog.cjs` is the changelog generator, wired in `.changeset/config.json` along with the `maintainers` list it reads. Attribution comes from git history, so the release job checks out full history rather than a shallow clone.
 - Conventional commit subjects (`fix:`, `feat:`, `test:`, `docs:`, `chore:`) on commits and PR titles. Never `git stash`; use a temporary commit.

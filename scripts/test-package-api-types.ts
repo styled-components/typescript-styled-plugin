@@ -1,14 +1,15 @@
 /**
  * Runs every consumer type gate: each test/package-api/tsconfig.consumers.<gate>.json, compiled
- * by the TypeScript its "typescript/*" paths entry points at (node_modules/<alias>/*, a workspace
- * alias declared in test/e2e/package.json). Adding a TypeScript version means adding one tsconfig.
+ * by the TypeScript its "typescript/*" paths entry points at (test/e2e/node_modules/<alias>/*, a
+ * workspace alias declared in test/e2e/package.json). Adding a TypeScript version means adding one tsconfig.
  *
  * - tsconfig.consumers.json is the shared base the version gates extend, not a gate itself.
  * - A gate whose moduleResolution (its own or an extended one) is node10 first gets the
  *   repository self-link that resolution needs (ensureNode10SelfLink, below).
- * - Fails before any gate runs when lib/ is missing, when a gate names no alias, or when an
- *   alias is not installed: without the alias, TypeScript silently falls back to the hoisted
- *   "typescript" package and checks the wrong version while still reporting success.
+ * - Fails before any gate runs when lib/ is missing, when a gate's paths entry does not resolve
+ *   to test/e2e/node_modules/<alias>, or when that alias is not installed: without it,
+ *   TypeScript silently falls back to whichever "typescript" version the root resolves and
+ *   checks the wrong version while still reporting success.
  * - Blind spot: reads each tsconfig as plain JSON, so a comment in one fails the run by name.
  *
  * Usage: node --experimental-strip-types scripts/test-package-api-types.ts [gate ...]
@@ -55,7 +56,7 @@ interface GateResult {
 const REPOSITORY_ROOT = realpathSync(path.resolve(import.meta.dirname, '..'))
 const GATE_DIRECTORY = path.join(REPOSITORY_ROOT, 'test', 'package-api')
 const GATE_FILE = /^tsconfig\.consumers\.(.+)\.json$/
-const ALIAS_TARGET = /(?:^|\/)node_modules\/([^/]+)\/\*$/
+const E2E_MODULES_DIRECTORY = path.join(REPOSITORY_ROOT, 'test', 'e2e', 'node_modules')
 
 function fail(message: string): never {
   console.error(message)
@@ -87,21 +88,30 @@ function resolvedOptions(file: string): CompilerOptions {
 function describeGate(name: string): Gate {
   const file = path.join(GATE_DIRECTORY, `tsconfig.consumers.${name}.json`)
   const options = resolvedOptions(file)
-  const target = options.paths?.['typescript/*']?.[0] ?? ''
-  const alias = ALIAS_TARGET.exec(target)?.[1]
-  if (alias === undefined) {
+  const target = options.paths?.['typescript/*']?.[0]
+  if (target === undefined || !target.endsWith('/*')) {
     fail(
       `Gate ${name} (${relative(file)}) needs a "typescript/*" paths entry ` +
-        'pointing at node_modules/<alias>/*, the TypeScript version it checks against.',
+        'pointing at test/e2e/node_modules/<alias>/*, the TypeScript version it checks against.',
     )
   }
 
-  const aliasDirectory = path.join(REPOSITORY_ROOT, 'node_modules', alias)
+  const aliasDirectory = path.resolve(path.dirname(file), target.slice(0, -'/*'.length))
+  const alias = path.basename(aliasDirectory)
+  if (aliasDirectory !== path.join(E2E_MODULES_DIRECTORY, alias)) {
+    fail(
+      `Gate ${name} (${relative(file)}) maps "typescript/*" to ${target}, which resolves to ` +
+        `${relative(aliasDirectory)}. TypeScript falls back to another version when that path is ` +
+        'missing, so the gate would pass on the wrong compiler. Point it at ' +
+        'test/e2e/node_modules/<alias>/*, an alias declared in test/e2e/package.json.',
+    )
+  }
+
   const tsc = path.join(aliasDirectory, 'bin', 'tsc')
   if (!existsSync(tsc)) {
     fail(
-      `Gate ${name} checks against node_modules/${alias}, which is not installed. Run ` +
-        '"corepack yarn install --immutable" to restore the alias declared in test/e2e/package.json.',
+      `Gate ${name} checks against test/e2e/node_modules/${alias}, which is not installed. Run ` +
+        '"pnpm install --frozen-lockfile" to restore the alias declared in test/e2e/package.json.',
     )
   }
 
@@ -139,7 +149,7 @@ function resolveLinkTarget(linkPath: string): string | undefined {
  * moduleResolution: node10 never consults "exports" or the self-reference feature that lets the
  * other consumer files import "@styled/typescript-styled-plugin" without a real node_modules
  * entry (docs/architecture.md, "Public surface"); it walks node_modules directories the way an
- * installed dependency would be found. test/e2e gets this for free because Yarn links its
+ * installed dependency would be found. test/e2e gets this for free because pnpm links its
  * "workspace:*" dependency there; test/package-api is not a workspace, so this keeps the
  * equivalent link at the repository root, matching what an install of this package into itself
  * would produce.
@@ -198,7 +208,7 @@ function runGate(gate: Gate): Promise<GateResult> {
 
 if (!existsSync(path.join(REPOSITORY_ROOT, 'lib', 'index.d.cts'))) {
   fail(
-    'lib/ is missing, and the consumer gates type-check its declarations. Run "corepack yarn compile" first.',
+    'lib/ is missing, and the consumer gates type-check its declarations. Run "pnpm compile" first.',
   )
 }
 
