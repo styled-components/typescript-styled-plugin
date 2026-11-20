@@ -150,7 +150,7 @@ Spec for how the plugin turns a tsserver request inside a tagged template into a
 
 ## Configuration
 
-- Source: `compilerOptions.plugins[]` entry at startup, then `configurePlugin` requests. `PluginConfigurationManager` (`src/configuration/plugin-configuration.ts`) normalizes any input shape and never throws, including when its logger throws.
+- Source: `compilerOptions.plugins[]` entry at startup, then `configurePlugin` requests. `PluginConfigurationManager` (`src/configuration/plugin-configuration.ts`) normalizes JSON-shaped input, which is what tsconfig and `configurePlugin` deliver, and never throws on it, including when its logger throws.
 - Normalization per field:
   - `tags`: a list of strings, or one string as a one-item list. Anything else is rejected.
   - `validate`: a boolean, or the string `"true"` or `"false"`. Anything else is rejected.
