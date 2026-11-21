@@ -57,9 +57,9 @@ export function createTemplateLineMap(
   const lineMap: TemplateLineMap = {
     /**
      * Reads `context.text` of this closure's own context on first access, whichever later request
-     * (a reused line map's own context included) triggers it first: safe only because a caller
-     * that can reach a `TemplateLineMap` has always already read this same context's `.text` via
-     * `createVirtualDocument` first (docs/architecture.md, "JavaScript escapes", Escape runs).
+     * (a reused line map's own context included) triggers it first; a reused map's context has the
+     * same raw text, so its runs fit the later context too (docs/architecture.md, "Virtual
+     * document", Escape runs).
      */
     get escapeRuns() {
       escapeRuns ??= context.rawText.includes('\\')
