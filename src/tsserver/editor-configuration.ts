@@ -18,6 +18,8 @@ interface EditorConfigurationListener {
   applyLegacyConfiguration(config: unknown): boolean
   /** The tsserver plugin entry that created the listener's language service: its name and position among same-named entries. */
   readonly entryKey?: string
+  /** The keys of every entry the load that created the listener enables, when known. */
+  readonly entryKeys?: ReadonlySet<string>
   readonly project?: ProjectDiagnostics
   supersede(): void
 }
@@ -42,9 +44,9 @@ export class EditorConfigurationManager {
 
   /**
    * A project keeps one live listener per plugin entry: a project reload creates a new language
-   * service for the same project and entry, and the older one is superseded (docs/architecture.md,
-   * "Configuration"). Two entries naming this package are both active in one load, so neither
-   * supersedes the other.
+   * service for the same project and entry, and the older one is superseded, as is one whose entry
+   * the reload no longer enables (docs/architecture.md, "Configuration"). Two entries naming this
+   * package are both active in one load, so neither supersedes the other.
    */
   public addListener(listener: EditorConfigurationListener): void {
     const project = listener.project
@@ -55,7 +57,12 @@ export class EditorConfigurationManager {
           continue
         }
         hasProjectListener = true
-        if (entry.entryKey === listener.entryKey) {
+        if (
+          entry.entryKey === listener.entryKey ||
+          (entry.entryKey !== undefined &&
+            listener.entryKeys !== undefined &&
+            !listener.entryKeys.has(entry.entryKey))
+        ) {
           this.listeners.delete(entry)
           entry.supersede()
         }
@@ -173,6 +180,7 @@ export class ProjectConfigurationManager
     editorConfiguration: EditorConfigurationManager,
     public readonly project?: ProjectDiagnostics,
     public readonly entryKey?: string,
+    public readonly entryKeys?: ReadonlySet<string>,
   ) {
     super()
     this.baseConfiguration = super.config

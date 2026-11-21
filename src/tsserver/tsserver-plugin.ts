@@ -2,7 +2,10 @@
 // Licensed under the MIT License.
 import { isDeepStrictEqual } from 'node:util'
 
-import { decorateWithTemplateLanguageService } from 'typescript-template-language-service-decorator'
+import {
+  decorateWithTemplateLanguageService,
+  type TemplateSettings,
+} from 'typescript-template-language-service-decorator'
 import type * as ts from 'typescript/lib/tsserverlibrary.js'
 
 import {
@@ -17,15 +20,27 @@ import { EditorConfigurationManager, ProjectConfigurationManager } from './edito
 import { pluginPackageName } from './plugin-identity.ts'
 import { TsServerLogger } from './tsserver-logger.ts'
 
-interface Decoration {
-  readonly entryKey: string | undefined
-  /** True once another plugin assigned a property on the layer, which unwrapping would discard. */
-  readonly isPatched: () => boolean
-  readonly languageService: ts.LanguageService
+interface Layer {
+  /** The service this layer wraps. */
+  readonly inner: ts.LanguageService
+  /** This plugin's layer directly above, which a retiring layer splices itself out of. */
+  outer: Layer | undefined
+  /**
+   * The proxy target, holding every property another plugin assigns or defines on the layer
+   * (ts-graphql-plugin patches the service it receives and returns the same object). Kept here
+   * rather than written through to the wrapped service, where a retired layer forwarding to that
+   * service would call its own patch again; a patched layer is never skipped.
+   */
+  readonly patches: object
+  /** Wraps another service instead, when a retiring layer below splices itself out. */
+  readonly replaceInner: (inner: ts.LanguageService) => void
+  readonly retired: boolean
 }
 
-/** Each language service this plugin returned, mapped to the one it decorates and the entry that asked. */
-const decorations = new WeakMap<ts.LanguageService, Decoration>()
+type Decorate = (languageService: ts.LanguageService) => ts.LanguageService
+
+/** Each language service this plugin returned, mapped to its place in the chain. */
+const layers = new WeakMap<ts.LanguageService, Layer>()
 
 export class TsServerStyledPlugin {
   private editorConfiguration?: EditorConfigurationManager
@@ -52,11 +67,12 @@ export class TsServerStyledPlugin {
     const editorUpdate = isRuntimeConfiguration
       ? editorConfiguration.updateFromPluginConfig(info.config, logger)
       : { changed: false, matched: false }
-    const entryKey = readEntryKey(info.config, info.project.getCompilerOptions().plugins)
+    const plugins = info.project.getCompilerOptions().plugins
     const configurationManager = new ProjectConfigurationManager(
       editorConfiguration,
       info.project,
-      entryKey,
+      readEntryKey(info.config, plugins),
+      readEntryKeys(plugins, info.project.projectService),
     )
     configurationManager.updateFromProjectConfig(projectConfiguration, logger)
     if (
@@ -89,59 +105,17 @@ export class TsServerStyledPlugin {
       logger,
     )
 
-    /** A project reload passes the same entry's earlier decoration back in (docs/architecture.md, "Request flow"). */
-    const previous = decorations.get(info.languageService)
-    const languageService =
-      previous !== undefined && previous.entryKey === entryKey && !previous.isPatched()
-        ? previous.languageService
-        : info.languageService
-    /**
-     * The layer tsserver keeps. Once a newer layer for the same project and entry supersedes it,
-     * it forwards straight to the service it wraps, so a layer still in the chain neither runs the
-     * decorator nor keeps it alive (docs/architecture.md, "Request flow"). A layer above this one
-     * (the decorator included) binds each method once, when it wraps, so every method here is a
-     * stable function that picks the active service on each call.
-     */
-    let active: ts.LanguageService = decorateWithTemplateLanguageService(
-      this.typescript,
-      languageService,
-      info.project,
-      templateLanguageService,
-      getTemplateSettings(configurationManager),
-      { logger },
+    const { layer, retire } = createLayer(
+      info.languageService,
+      createDecorator(
+        this.typescript,
+        info.project,
+        templateLanguageService,
+        getTemplateSettings(configurationManager),
+        logger,
+      ),
     )
-    configurationManager.onSuperseded(() => {
-      active = languageService
-    })
-    const forwarders = new Map<PropertyKey, (...args: unknown[]) => unknown>()
-    /**
-     * Properties another plugin assigns on this layer (ts-graphql-plugin patches the service it
-     * receives and returns the same object). Kept here rather than written through to the wrapped
-     * service, where a retired layer forwarding to that service would call its own patch again.
-     */
-    const patches = new Map<PropertyKey, unknown>()
-    const layer = new Proxy(languageService, {
-      get: (_target, property) => {
-        if (patches.has(property)) {
-          return patches.get(property)
-        }
-        const value: unknown = Reflect.get(active, property)
-        if (typeof value !== 'function') {
-          return value
-        }
-        let forwarder = forwarders.get(property)
-        if (forwarder === undefined) {
-          forwarder = (...args) => Reflect.apply(Reflect.get(active, property), active, args)
-          forwarders.set(property, forwarder)
-        }
-        return forwarder
-      },
-      set: (_target, property, value) => {
-        patches.set(property, value)
-        return true
-      },
-    })
-    decorations.set(layer, { entryKey, isPatched: () => patches.size > 0, languageService })
+    configurationManager.onSuperseded(retire)
     return layer
   }
 
@@ -165,6 +139,153 @@ export class TsServerStyledPlugin {
 
 function logConfiguration(config: StyledPluginConfiguration, logger: TsServerLogger): void {
   logger.log('config: ' + describeValue(config))
+}
+
+function isPatched(layer: Layer): boolean {
+  return Reflect.ownKeys(layer.patches).length > 0
+}
+
+function createDecorator(
+  typescript: typeof ts,
+  project: ts.server.Project,
+  templateLanguageService: StyledTemplateLanguageService,
+  templateSettings: TemplateSettings,
+  logger: TsServerLogger,
+): Decorate {
+  return (languageService) =>
+    decorateWithTemplateLanguageService(
+      typescript,
+      languageService,
+      project,
+      templateLanguageService,
+      templateSettings,
+      { logger },
+    )
+}
+
+/**
+ * The layer tsserver keeps for one plugin entry, and the function that retires it. A project
+ * reload passes the project's current service back in, topped by this plugin's earlier layers; the
+ * one for this entry was just superseded, and those retired with nothing patched on them are
+ * skipped. Once retired, a layer forwards straight to the service it wraps and drops `decorate`,
+ * so the decorator neither runs nor stays reachable, and when this plugin's layer sits directly
+ * above, it splices itself out of the chain (docs/architecture.md, "Request flow").
+ */
+function createLayer(
+  languageService: ts.LanguageService,
+  decorate: Decorate,
+): { readonly layer: ts.LanguageService; readonly retire: () => void } {
+  let inner = languageService
+  let below = layers.get(inner)
+  while (below !== undefined && below.retired && !isPatched(below)) {
+    inner = below.inner
+    below = layers.get(inner)
+  }
+  /** A closure here must not capture `decorate` itself, or a retired layer would keep it. */
+  let decorator: Decorate | undefined = decorate
+  let active = decorator(inner)
+  let retired = false
+  const record: Layer = {
+    get inner() {
+      return inner
+    },
+    outer: undefined,
+    patches: Object.create(null),
+    replaceInner: (service) => {
+      inner = service
+      active = decorator === undefined ? service : decorator(service)
+    },
+    get retired() {
+      return retired
+    },
+  }
+  if (below !== undefined) {
+    below.outer = record
+  }
+  const layer = createForwardingLayer(record.patches, () => active)
+  layers.set(layer, record)
+  const retire = () => {
+    retired = true
+    decorator = undefined
+    active = inner
+    const above = record.outer
+    if (above === undefined || isPatched(record)) {
+      return
+    }
+    above.replaceInner(inner)
+    const next = layers.get(inner)
+    if (next !== undefined) {
+      next.outer = above
+    }
+    record.outer = undefined
+  }
+  return { layer, retire }
+}
+
+/**
+ * A language service over `patches`, a null-prototype object, that answers a property defined
+ * there first and otherwise forwards to `read()`, resolved on each access. A layer above binds
+ * each method once, when it wraps, so each method is one stable function that resolves its target
+ * on every call.
+ */
+function createForwardingLayer(
+  patches: object,
+  read: () => ts.LanguageService,
+): ts.LanguageService {
+  const forwarders = new Map<PropertyKey, (...args: unknown[]) => unknown>()
+  const handler: ProxyHandler<object> = {
+    /**
+     * A language service's own methods are configurable, enumerable, and writable, so defining one
+     * by value alone (`{ value }`, or a plain assignment) only replaces the value. A property new to
+     * `patches` gets the same defaults; otherwise it would be non-configurable and read-only, which
+     * a proxy above this layer, such as the decorator's, may not report as anything else.
+     */
+    defineProperty: (target, property, descriptor) =>
+      Reflect.defineProperty(
+        target,
+        property,
+        Reflect.getOwnPropertyDescriptor(target, property) !== undefined
+          ? descriptor
+          : {
+              configurable: true,
+              enumerable: true,
+              ...('get' in descriptor || 'set' in descriptor ? {} : { writable: true }),
+              ...descriptor,
+            },
+      ),
+    get: (target, property, receiver) => {
+      if (Reflect.has(target, property)) {
+        return Reflect.get(target, property, receiver)
+      }
+      const value: unknown = Reflect.get(read(), property)
+      if (typeof value !== 'function') {
+        return value
+      }
+      let forwarder = forwarders.get(property)
+      if (forwarder === undefined) {
+        forwarder = (...args) => {
+          const service = read()
+          return Reflect.apply(Reflect.get(service, property), service, args)
+        }
+        forwarders.set(property, forwarder)
+      }
+      return forwarder
+    },
+    getOwnPropertyDescriptor: (target, property) => {
+      const own = Reflect.getOwnPropertyDescriptor(target, property)
+      if (own !== undefined) {
+        return own
+      }
+      const forwarded = Reflect.getOwnPropertyDescriptor(read(), property)
+      /** A proxy may only report a property its target lacks as configurable. */
+      return forwarded === undefined ? undefined : { ...forwarded, configurable: true }
+    },
+    getPrototypeOf: () => Reflect.getPrototypeOf(read()),
+    has: (target, property) => Reflect.has(target, property) || Reflect.has(read(), property),
+    ownKeys: (target) => [...new Set([...Reflect.ownKeys(target), ...Reflect.ownKeys(read())])],
+  }
+  /** Every read goes through the handler, which only serves language service members. */
+  return new Proxy(patches, handler) as ts.LanguageService
 }
 
 /**
@@ -203,7 +324,39 @@ function readEntryKey(config: unknown, plugins: unknown): string | undefined {
   const sameNamed = Array.isArray(plugins)
     ? plugins.filter((entry) => isRecord(entry) && entry.name === name)
     : []
-  return `${Math.max(sameNamed.indexOf(config), 0)}:${name}`
+  return formatEntryKey(Math.max(sameNamed.indexOf(config), 0), name)
+}
+
+/**
+ * The keys of every entry this load enables: each project entry, and each global plugin no project
+ * entry names (tsserver's `enableGlobalPlugins` skips those). Undefined when the project service
+ * does not expose its global plugins, so no entry can be shown to be gone.
+ */
+function readEntryKeys(plugins: unknown, projectService: unknown): ReadonlySet<string> | undefined {
+  const globalPlugins = isRecord(projectService) ? projectService.globalPlugins : undefined
+  if (!Array.isArray(globalPlugins)) {
+    return undefined
+  }
+  const keys = new Set<string>()
+  const counts = new Map<string, number>()
+  for (const entry of Array.isArray(plugins) ? plugins : []) {
+    const name = readPluginName(entry)
+    if (name !== undefined) {
+      const index = counts.get(name) ?? 0
+      keys.add(formatEntryKey(index, name))
+      counts.set(name, index + 1)
+    }
+  }
+  for (const name of globalPlugins) {
+    if (typeof name === 'string' && !counts.has(name)) {
+      keys.add(formatEntryKey(0, name))
+    }
+  }
+  return keys
+}
+
+function formatEntryKey(index: number, name: string): string {
+  return `${index}:${name}`
 }
 
 function isSameEntry(config: unknown, projectConfiguration: unknown): boolean {

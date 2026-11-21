@@ -4,7 +4,7 @@ import { assert, describe, it } from 'vitest'
 import { PluginConfigurationManager } from '../../src/configuration/plugin-configuration'
 import createPlugin from '../../src/index'
 import { EditorConfigurationManager } from '../../src/tsserver/editor-configuration'
-import { pluginIdentity } from '../../src/tsserver/plugin-identity'
+import { pluginIdentity, pluginPackageName } from '../../src/tsserver/plugin-identity'
 import {
   isSupportedTypeScriptVersion,
   TsServerStyledPlugin,
@@ -425,36 +425,55 @@ describe('TsServerStyledPlugin', () => {
     assert.strictEqual(walks, singleLayerWalks)
   })
 
-  it('should keep methods another plugin patches onto its earlier layer during a reload', () => {
-    const fileName = '/main.ts'
-    const source = 'const a = styled.div`boarder: 0;`'
-    const info = createPluginCreateInfo([], { files: { [fileName]: source } })
-    const marker: ts.Diagnostic = {
-      category: ts.DiagnosticCategory.Message,
-      code: 1,
-      file: undefined,
-      length: 0,
-      messageText: 'patched',
-      start: 0,
-    }
-    const first = createPlugin({ typescript: ts }).create(info)
-    /** Patches methods onto the service it receives and returns that same object, as ts-graphql-plugin does. */
-    const getSemanticDiagnostics = first.getSemanticDiagnostics
-    first.getSemanticDiagnostics = (name) => [...getSemanticDiagnostics(name), marker]
+  it.each([
+    [
+      'assigns',
+      (service: ts.LanguageService, patch: ts.LanguageService['getSemanticDiagnostics']) => {
+        service.getSemanticDiagnostics = patch
+      },
+    ],
+    [
+      'defines',
+      (service: ts.LanguageService, patch: ts.LanguageService['getSemanticDiagnostics']) => {
+        /** By value alone, which on a plain service object only replaces the value. */
+        Object.defineProperty(service, 'getSemanticDiagnostics', { value: patch })
+      },
+    ],
+  ])(
+    'should keep a method another plugin %s on its earlier layer during a reload',
+    (_name, apply) => {
+      const fileName = '/main.ts'
+      const source = 'const a = styled.div`boarder: 0;`'
+      const info = createPluginCreateInfo([], { files: { [fileName]: source } })
+      const marker: ts.Diagnostic = {
+        category: ts.DiagnosticCategory.Message,
+        code: 1,
+        file: undefined,
+        length: 0,
+        messageText: 'patched',
+        start: 0,
+      }
+      const first = createPlugin({ typescript: ts }).create(info)
+      /** Patches methods onto the service it receives and returns that same object, as ts-graphql-plugin does. */
+      const getSemanticDiagnostics = first.getSemanticDiagnostics
+      apply(first, (name) => [...getSemanticDiagnostics(name), marker])
 
-    const reloaded = createPlugin({ typescript: ts }).create({ ...info, languageService: first })
+      const reloaded = createPlugin({ typescript: ts }).create({ ...info, languageService: first })
 
-    assert.deepEqual(
-      reloaded
-        .getSemanticDiagnostics(fileName)
-        .filter(({ messageText, source }) => source === pluginIdentity || messageText === 'patched')
-        .map(({ messageText, start }) => ({ messageText, start })),
-      [
-        { messageText: 'patched', start: 0 },
-        { messageText: "Unknown property: 'boarder'", start: source.indexOf('boarder') },
-      ],
-    )
-  })
+      assert.deepEqual(
+        reloaded
+          .getSemanticDiagnostics(fileName)
+          .filter(
+            ({ messageText, source }) => source === pluginIdentity || messageText === 'patched',
+          )
+          .map(({ messageText, start }) => ({ messageText, start })),
+        [
+          { messageText: 'patched', start: 0 },
+          { messageText: "Unknown property: 'boarder'", start: source.indexOf('boarder') },
+        ],
+      )
+    },
+  )
 
   it('should keep both entries active when a project lists this plugin twice under one name', () => {
     const fileName = '/main.ts'
@@ -479,6 +498,97 @@ describe('TsServerStyledPlugin', () => {
         .map(({ start }) => start),
       [source.indexOf('boarder'), source.lastIndexOf('boarder')].sort((a, b) => a - b),
     )
+  })
+
+  it('should retire an entry that a reload no longer enables', () => {
+    const fileName = '/main.ts'
+    const source = 'const a = firstTag`boarder: 0;`; const b = secondTag`boarder: 0;`'
+    const info = createPluginCreateInfo([], {
+      files: { [fileName]: source },
+      projectService: createProjectService([], []),
+    })
+    const pluginStarts = (service: ts.LanguageService) =>
+      service
+        .getSemanticDiagnostics(fileName)
+        .filter((diagnostic) => diagnostic.source === pluginIdentity)
+        .map(({ start }) => start)
+    const entries = ['firstTag', 'secondTag'].map((tag) => ({
+      name: pluginPackageName,
+      tags: [tag],
+    }))
+    info.project.getCompilerOptions = () => ({ plugins: entries })
+    const first = createPlugin({ typescript: ts }).create({ ...info, config: entries[0] })
+    const second = createPlugin({ typescript: ts }).create({
+      ...info,
+      config: entries[1],
+      languageService: first,
+    })
+    /** The positive control: both entries are active before the reload. */
+    assert.deepEqual(pluginStarts(second), [
+      source.indexOf('boarder'),
+      source.lastIndexOf('boarder'),
+    ])
+
+    const remaining = [entries[1]]
+    info.project.getCompilerOptions = () => ({ plugins: remaining })
+    const reloaded = createPlugin({ typescript: ts }).create({
+      ...info,
+      config: remaining[0],
+      languageService: second,
+    })
+
+    assert.deepEqual(pluginStarts(reloaded), [source.lastIndexOf('boarder')])
+  })
+
+  it('should keep the layer chain the same depth across repeated reloads of two entries', (context) => {
+    const fileName = '/main.ts'
+    const source = 'const a = myCss`boarder: 0;`'
+    const info = createPluginCreateInfo([], {
+      files: { [fileName]: source },
+      pluginName: 'styled-alias',
+      projectPluginConfiguration: { tags: ['myCss'] },
+      projectService: createProjectService([], [pluginPackageName]),
+    })
+    const stackTraceLimit = Error.stackTraceLimit
+    Error.stackTraceLimit = Infinity
+    context.onTestFinished(() => {
+      Error.stackTraceLimit = stackTraceLimit
+    })
+    /** The number of frames between a request and the project's own language service. */
+    let depth = 0
+    const base = info.languageService
+    const getSemanticDiagnostics = base.getSemanticDiagnostics
+    base.getSemanticDiagnostics = (name) => {
+      depth = new Error().stack?.split('\n').length ?? 0
+      return getSemanticDiagnostics(name)
+    }
+    /** One project load: the aliased tsconfig entry, then the global plugin tsserver enables after it. */
+    const load = (languageService: ts.LanguageService) => {
+      const aliased = createPlugin({ typescript: ts }).create({ ...info, languageService })
+      return createPlugin({ typescript: ts }).create({
+        ...info,
+        config: { global: true, name: pluginPackageName },
+        languageService: aliased,
+      })
+    }
+    const diagnoseAndMeasure = (service: ts.LanguageService) => {
+      const starts = service
+        .getSemanticDiagnostics(fileName)
+        .filter((diagnostic) => diagnostic.source === pluginIdentity)
+        .map(({ start }) => start)
+      return { depth, starts }
+    }
+
+    let service = load(base)
+    const loaded = diagnoseAndMeasure(service)
+    for (let reload = 0; reload < 5; reload++) {
+      service = load(service)
+    }
+
+    /** The positive control: the first load reports the aliased entry's diagnostic. */
+    assert.deepEqual(loaded.starts, [source.indexOf('boarder')])
+    assert.isAbove(loaded.depth, 0)
+    assert.deepEqual(diagnoseAndMeasure(service), loaded)
   })
 
   it('should keep an aliased project entry active when a global entry loads after it', () => {
@@ -590,8 +700,9 @@ function createPluginCreateInfo(
   return pluginCreateInfo as unknown as ts.server.PluginCreateInfo
 }
 
-function createProjectService(messages: string[]) {
+function createProjectService(messages: string[], globalPlugins?: ReadonlyArray<string>) {
   return {
+    globalPlugins,
     logger: {
       info(message: string) {
         messages.push(message)
