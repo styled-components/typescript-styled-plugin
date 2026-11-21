@@ -457,7 +457,7 @@ describe('PluginConfigurationManager', () => {
     (kind) => {
       const editorConfiguration = new EditorConfigurationManager()
       const logger = createLogger()
-      const refreshes = [0, 0]
+      const refreshes = [0, 0, 0]
       const updates = [0, 0, 0]
       const updatesAtRefresh: number[][] = []
       const firstProject = {
@@ -474,7 +474,14 @@ describe('PluginConfigurationManager', () => {
           refreshes[1]++
         },
       }
-      const managers = [firstProject, firstProject, secondProject].map((project, index) => {
+      const thirdProject = {
+        close() {},
+        refreshDiagnostics() {
+          updatesAtRefresh.push([...updates])
+          refreshes[2]++
+        },
+      }
+      const managers = [firstProject, secondProject, thirdProject].map((project, index) => {
         const manager = new ProjectConfigurationManager(editorConfiguration, project)
         manager.updateFromProjectConfig({ tags: ['baseTag'] })
         manager.onUpdatedConfig(() => updates[index]++)
@@ -490,7 +497,7 @@ describe('PluginConfigurationManager', () => {
       }
 
       assert.deepEqual(updates, [1, 1, 1])
-      assert.deepEqual(refreshes, [1, 0])
+      assert.deepEqual(refreshes, [1, 0, 0])
       assert.deepEqual(updatesAtRefresh, [[1, 1, 1]])
       for (const manager of managers) {
         assert.deepEqual(
@@ -502,11 +509,11 @@ describe('PluginConfigurationManager', () => {
   )
 
   it.each(['editor', 'legacy'])(
-    'should remove all managers when a project closes before a %s update',
+    "should remove a project's manager when the project closes before a %s update",
     (kind) => {
       const editorConfiguration = new EditorConfigurationManager()
       const refreshes = [0, 0]
-      const updates = [0, 0, 0]
+      const updates = [0, 0]
       const firstProject = {
         closed: false,
         close() {
@@ -522,14 +529,14 @@ describe('PluginConfigurationManager', () => {
           refreshes[1]++
         },
       }
-      const managers = [firstProject, firstProject, secondProject].map((project, index) => {
+      const managers = [firstProject, secondProject].map((project, index) => {
         const manager = new ProjectConfigurationManager(editorConfiguration, project)
         manager.updateFromProjectConfig({ tags: ['baseTag'] })
         manager.onUpdatedConfig(() => updates[index]++)
         return manager
       })
       editorConfiguration.updateFromPluginConfig(editorEnvelope(['initialTag']))
-      assert.deepEqual(updates, [1, 1, 1])
+      assert.deepEqual(updates, [1, 1])
       assert.deepEqual(refreshes, [1, 0])
 
       firstProject.close()
@@ -542,16 +549,15 @@ describe('PluginConfigurationManager', () => {
         editorConfiguration.activateLegacy(legacy.config)
       }
 
-      assert.deepEqual(updates, [1, 1, 2])
+      assert.deepEqual(updates, [1, 2])
       assert.deepEqual(refreshes, [1, 1])
       assert.deepEqual(managers[0].config.tags, ['baseTag', 'initialTag'])
-      assert.deepEqual(managers[1].config.tags, ['baseTag', 'initialTag'])
       const expectedTags = kind === 'editor' ? ['baseTag', 'nextTag'] : ['nextTag']
-      assert.deepEqual(managers[2].config.tags, expectedTags)
+      assert.deepEqual(managers[1].config.tags, expectedTags)
 
       secondProject.close()
       editorConfiguration.updateFromPluginConfig(editorEnvelope(['reopenedTag']))
-      assert.deepEqual(updates, [1, 1, 2])
+      assert.deepEqual(updates, [1, 2])
       assert.deepEqual(refreshes, [1, 1])
       const reopened = new ProjectConfigurationManager(editorConfiguration, firstProject)
       reopened.updateFromProjectConfig({ tags: ['baseTag'] })
@@ -562,6 +568,41 @@ describe('PluginConfigurationManager', () => {
       assert.deepEqual(refreshes, [1, 1])
     },
   )
+
+  it("should supersede a project's earlier manager when a reload adds a newer one", () => {
+    const editorConfiguration = new EditorConfigurationManager()
+    let refreshes = 0
+    let closes = 0
+    const project = {
+      close() {
+        closes++
+      },
+      refreshDiagnostics() {
+        refreshes++
+      },
+    }
+    const earlier = new ProjectConfigurationManager(editorConfiguration, project)
+    earlier.updateFromProjectConfig({ tags: ['baseTag'] })
+    let earlierUpdates = 0
+    earlier.onUpdatedConfig(() => earlierUpdates++)
+
+    const newer = new ProjectConfigurationManager(editorConfiguration, project)
+    newer.updateFromProjectConfig({ tags: ['baseTag'] })
+    /** Notified once, so its language service releases its caches. */
+    assert.strictEqual(earlierUpdates, 1)
+    assert.deepEqual(earlier.config.tags, [])
+
+    editorConfiguration.updateFromPluginConfig(editorEnvelope(['extraTag']))
+    assert.deepEqual(newer.config.tags, ['baseTag', 'extraTag'])
+    assert.strictEqual(refreshes, 1)
+    assert.strictEqual(earlierUpdates, 1)
+    assert.deepEqual(earlier.config.tags, [])
+
+    project.close()
+    editorConfiguration.updateFromPluginConfig(editorEnvelope(['nextTag']))
+    assert.strictEqual(closes, 1)
+    assert.deepEqual(newer.config.tags, ['baseTag', 'extraTag'])
+  })
 
   it.each(['editor', 'legacy'])(
     'should continue applying %s configuration after one manager fails',

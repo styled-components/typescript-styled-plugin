@@ -16,7 +16,10 @@ interface ProjectDiagnostics {
 interface EditorConfigurationListener {
   applyEditorTags(extraTags: ReadonlyArray<string>): boolean
   applyLegacyConfiguration(config: unknown): boolean
+  /** The `name` of the tsserver plugin entry that created the listener's language service. */
+  readonly pluginName?: string
   readonly project?: ProjectDiagnostics
+  supersede(): void
 }
 
 type EditorConfigurationParseResult =
@@ -37,18 +40,37 @@ export class EditorConfigurationManager {
   private state: DynamicConfigurationState = { kind: 'none' }
   private readonly listeners = new Set<EditorConfigurationListener>()
 
+  /**
+   * A project keeps one live listener per plugin entry name: a project reload creates a new
+   * language service for the same project and entry, and the older one is superseded
+   * (docs/architecture.md, "Configuration"). Two entries naming this package differently (an npm
+   * alias next to a global plugin) are both active in one load, so neither supersedes the other.
+   */
   public addListener(listener: EditorConfigurationListener): void {
     const project = listener.project
-    if (project && !Array.from(this.listeners).some((entry) => entry.project === project)) {
-      const close = project.close
-      project.close = () => {
-        for (const entry of this.listeners) {
-          if (entry.project === project) {
-            this.listeners.delete(entry)
-          }
+    if (project) {
+      let hasProjectListener = false
+      for (const entry of this.listeners) {
+        if (entry.project !== project) {
+          continue
         }
-        project.close = close
-        close.call(project)
+        hasProjectListener = true
+        if (entry.pluginName === listener.pluginName) {
+          this.listeners.delete(entry)
+          entry.supersede()
+        }
+      }
+      if (!hasProjectListener) {
+        const close = project.close
+        project.close = () => {
+          for (const entry of this.listeners) {
+            if (entry.project === project) {
+              this.listeners.delete(entry)
+            }
+          }
+          project.close = close
+          close.call(project)
+        }
       }
     }
     this.listeners.add(listener)
@@ -149,6 +171,7 @@ export class ProjectConfigurationManager
   public constructor(
     editorConfiguration: EditorConfigurationManager,
     public readonly project?: ProjectDiagnostics,
+    public readonly pluginName?: string,
   ) {
     super()
     this.baseConfiguration = super.config
@@ -195,6 +218,12 @@ export class ProjectConfigurationManager
 
   public override onUpdatedConfig(listener: () => void): void {
     this.projectUpdateListeners.add(listener)
+  }
+
+  /** Matching no tag leaves a decorator that still holds this manager handling no template. */
+  public supersede(): void {
+    this.effectiveConfiguration = { ...this.effectiveConfiguration, tags: [] }
+    this.notifyUpdated()
   }
 
   public applyEditorTags(extraTags: ReadonlyArray<string>): boolean {

@@ -365,6 +365,72 @@ describe('TsServerStyledPlugin', () => {
     assert.strictEqual(firstRefreshes, 1)
     assert.strictEqual(secondRefreshes, 1)
   })
+
+  it.each([
+    ['its own earlier decoration', (service: ts.LanguageService) => service],
+    [
+      'another plugin wrapping its earlier decoration',
+      (service: ts.LanguageService) => new Proxy(service, {}),
+    ],
+  ])('should report each CSS diagnostic once when a reload passes in %s', (_name, wrap) => {
+    const fileName = '/main.ts'
+    const source = 'const a = styled.div`boarder: 0;`'
+    const info = createPluginCreateInfo([], { files: { [fileName]: source } })
+    const pluginDiagnostics = (service: ts.LanguageService) =>
+      service
+        .getSemanticDiagnostics(fileName)
+        .filter((diagnostic) => diagnostic.source === pluginIdentity)
+        .map(({ length, messageText, start }) => ({ length, messageText, start }))
+    const expected = [
+      {
+        length: 'boarder'.length,
+        messageText: "Unknown property: 'boarder'",
+        start: source.indexOf('boarder'),
+      },
+    ]
+    const first = createPlugin({ typescript: ts }).create(info)
+    /** The positive control: the first load reports the diagnostic. */
+    assert.deepEqual(pluginDiagnostics(first), expected)
+
+    const reloaded = createPlugin({ typescript: ts }).create({
+      ...info,
+      languageService: wrap(first),
+    })
+
+    assert.deepEqual(pluginDiagnostics(reloaded), expected)
+  })
+
+  it('should keep an aliased project entry active when a global entry loads after it', () => {
+    const fileName = '/main.ts'
+    const source = 'const a = myCss`boarder: 0;`'
+    const projectService = createProjectService([])
+    const info = createPluginCreateInfo([], {
+      files: { [fileName]: source },
+      pluginName: 'styled-alias',
+      projectPluginConfiguration: { tags: ['myCss'] },
+      projectService,
+    })
+    const aliased = createPlugin({ typescript: ts }).create(info)
+    const global = createPlugin({ typescript: ts }).create({
+      ...info,
+      config: { global: true, name: '@styled/typescript-styled-plugin' },
+      languageService: aliased,
+    })
+
+    assert.deepEqual(
+      global
+        .getSemanticDiagnostics(fileName)
+        .filter((diagnostic) => diagnostic.source === pluginIdentity)
+        .map(({ length, messageText, start }) => ({ length, messageText, start })),
+      [
+        {
+          length: 'boarder'.length,
+          messageText: "Unknown property: 'boarder'",
+          start: source.indexOf('boarder'),
+        },
+      ],
+    )
+  })
 })
 
 function createCycle(): Record<string, unknown> {
@@ -375,19 +441,22 @@ function createCycle(): Record<string, unknown> {
 
 /**
  * The fields of PluginCreateInfo the plugin reads: its configuration, the host language service
- * it decorates, and the project service logger its log lines go to. A real tsserver Project needs a
+ * it decorates, the project's own language service the decorator reads each file's program from,
+ * and the project service logger its log lines go to. A real tsserver Project needs a
  * running server host, so the rest of the object is left out and the shape is asserted once here.
  */
 function createPluginCreateInfo(
   messages: string[],
   {
     config,
+    files = {},
     pluginName = '@styled/typescript-styled-plugin',
     projectPluginConfiguration,
     projectService,
     refreshDiagnostics,
   }: {
     config?: unknown
+    files?: Readonly<Record<string, string>>
     pluginName?: string
     projectPluginConfiguration?: Readonly<Record<string, unknown>>
     projectService?: ReturnType<typeof createProjectService>
@@ -395,14 +464,15 @@ function createPluginCreateInfo(
   } = {},
 ): ts.server.PluginCreateInfo {
   const host: ts.LanguageServiceHost = {
-    fileExists: () => false,
+    fileExists: (fileName) => fileName in files,
     getCompilationSettings: () => ({}),
     getCurrentDirectory: () => '/',
     getDefaultLibFileName: () => 'lib.d.ts',
-    getScriptFileNames: () => [],
-    getScriptSnapshot: () => undefined,
+    getScriptFileNames: () => Object.keys(files),
+    getScriptSnapshot: (fileName) =>
+      fileName in files ? ts.ScriptSnapshot.fromString(files[fileName]) : undefined,
     getScriptVersion: () => '0',
-    readFile: () => undefined,
+    readFile: (fileName) => files[fileName],
   }
   const projectPluginEntry = projectPluginConfiguration
     ? {
@@ -410,14 +480,16 @@ function createPluginCreateInfo(
         ...projectPluginConfiguration,
       }
     : undefined
+  const languageService = ts.createLanguageService(host)
   const pluginCreateInfo = {
     config: config ?? projectPluginEntry ?? {},
-    languageService: ts.createLanguageService(host),
+    languageService,
     project: {
       close() {},
       getCompilerOptions: () => ({
         plugins: projectPluginEntry ? [projectPluginEntry] : undefined,
       }),
+      getLanguageService: () => languageService,
       projectService: projectService ?? createProjectService(messages),
       refreshDiagnostics: refreshDiagnostics ?? (() => {}),
     },

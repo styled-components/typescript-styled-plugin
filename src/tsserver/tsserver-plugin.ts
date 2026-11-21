@@ -17,6 +17,14 @@ import { EditorConfigurationManager, ProjectConfigurationManager } from './edito
 import { pluginPackageName } from './plugin-identity.ts'
 import { TsServerLogger } from './tsserver-logger.ts'
 
+interface Decoration {
+  readonly languageService: ts.LanguageService
+  readonly pluginName: string | undefined
+}
+
+/** Each language service this plugin returned, mapped to the one it decorates and the entry that asked. */
+const decorations = new WeakMap<ts.LanguageService, Decoration>()
+
 export class TsServerStyledPlugin {
   private editorConfiguration?: EditorConfigurationManager
   private logger?: TsServerLogger
@@ -42,7 +50,12 @@ export class TsServerStyledPlugin {
     const editorUpdate = isRuntimeConfiguration
       ? editorConfiguration.updateFromPluginConfig(info.config, logger)
       : { changed: false, matched: false }
-    const configurationManager = new ProjectConfigurationManager(editorConfiguration, info.project)
+    const pluginName = readPluginName(info.config)
+    const configurationManager = new ProjectConfigurationManager(
+      editorConfiguration,
+      info.project,
+      pluginName,
+    )
     configurationManager.updateFromProjectConfig(projectConfiguration, logger)
     if (
       isRuntimeConfiguration &&
@@ -74,14 +87,22 @@ export class TsServerStyledPlugin {
       logger,
     )
 
-    return decorateWithTemplateLanguageService(
+    /** A project reload passes the same entry's earlier decoration back in (docs/architecture.md, "Request flow"). */
+    const previous = decorations.get(info.languageService)
+    const languageService =
+      previous !== undefined && previous.pluginName === pluginName
+        ? previous.languageService
+        : info.languageService
+    const decorated = decorateWithTemplateLanguageService(
       this.typescript,
-      info.languageService,
+      languageService,
       info.project,
       templateLanguageService,
       getTemplateSettings(configurationManager),
       { logger },
     )
+    decorations.set(decorated, { languageService, pluginName })
+    return decorated
   }
 
   public onConfigurationChanged(config: unknown) {
@@ -120,8 +141,12 @@ function readProjectPluginConfiguration(info: ts.server.PluginCreateInfo): unkno
   if (plugins.some((entry) => entry === config)) {
     return config
   }
-  const name = isRecord(config) && typeof config.name === 'string' ? config.name : pluginPackageName
+  const name = readPluginName(config) ?? pluginPackageName
   return plugins.find((entry) => isRecord(entry) && entry.name === name)
+}
+
+function readPluginName(config: unknown): string | undefined {
+  return isRecord(config) && typeof config.name === 'string' ? config.name : undefined
 }
 
 function isSameEntry(config: unknown, projectConfiguration: unknown): boolean {

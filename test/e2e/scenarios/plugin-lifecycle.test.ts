@@ -439,6 +439,53 @@ describe.concurrent('Plugin lifecycle', () => {
     )
   })
 
+  it('should report diagnostics, code fixes, and outlining spans once after project reloads', async (context) => {
+    const server = startServer(context)
+    const source = mark(
+      ['const q = css`', '⟨rule⟩a {', '⟨/rule⟩⟨property⟩boarder⟨/property⟩: 0;', '}', '`'].join(
+        '\n',
+      ),
+    )
+    const file = server.open(source.text)
+    const property = source.range('property')
+    const results = async () => ({
+      diagnostics: spansAndText(
+        pluginDiagnostics(await server.request('semanticDiagnosticsSync', { file })),
+      ),
+      fixes: bodyOf(
+        await server.request('getCodeFixes', {
+          endLine: property.end.line,
+          endOffset: property.end.offset,
+          errorCodes: [pluginDiagnosticCode],
+          file,
+          startLine: property.start.line,
+          startOffset: property.start.offset,
+        }),
+      ).map(({ description }) => description),
+      /** TypeScript contributes the first span, for the multiline template literal itself. */
+      outlining: bodyOf(await server.request('getOutliningSpans', { file }))
+        .slice(1)
+        .map(({ textSpan }) => textSpan),
+    })
+    const expected = {
+      diagnostics: [{ ...property, text: "Unknown property: 'boarder'" }],
+      /** vscode-css-languageservice ranks these three by similarity to "boarder". */
+      fixes: ["Rename to 'border'", "Rename to 'border-top'", "Rename to 'border-left'"],
+      outlining: [source.range('rule')],
+    }
+
+    const loaded = await results()
+    server.notify('reloadProjects', undefined)
+    const reloadedOnce = await results()
+    server.notify('reloadProjects', undefined)
+    const reloadedTwice = await results()
+
+    /** The first load is the positive control for the reloaded results. */
+    assert.deepEqual(loaded, expected)
+    assert.deepEqual(reloadedOnce, expected)
+    assert.deepEqual(reloadedTwice, expected)
+  })
+
   it('should isolate project tags, validation, lint, and Emmet in one server', async (context) => {
     const server = startServer(context)
     const source = mark(
