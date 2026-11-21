@@ -233,6 +233,17 @@ function createForwardingLayer(
   read: () => ts.LanguageService,
 ): ts.LanguageService {
   const forwarders = new Map<PropertyKey, (...args: unknown[]) => unknown>()
+  const forwarderFor = (property: PropertyKey) => {
+    let forwarder = forwarders.get(property)
+    if (forwarder === undefined) {
+      forwarder = (...args) => {
+        const service = read()
+        return Reflect.apply(Reflect.get(service, property), service, args)
+      }
+      forwarders.set(property, forwarder)
+    }
+    return forwarder
+  }
   const handler: ProxyHandler<object> = {
     /**
      * A language service's own methods are configurable, enumerable, and writable, so defining one
@@ -258,18 +269,7 @@ function createForwardingLayer(
         return Reflect.get(target, property, receiver)
       }
       const value: unknown = Reflect.get(read(), property)
-      if (typeof value !== 'function') {
-        return value
-      }
-      let forwarder = forwarders.get(property)
-      if (forwarder === undefined) {
-        forwarder = (...args) => {
-          const service = read()
-          return Reflect.apply(Reflect.get(service, property), service, args)
-        }
-        forwarders.set(property, forwarder)
-      }
-      return forwarder
+      return typeof value === 'function' ? forwarderFor(property) : value
     },
     getOwnPropertyDescriptor: (target, property) => {
       const own = Reflect.getOwnPropertyDescriptor(target, property)
@@ -277,8 +277,17 @@ function createForwardingLayer(
         return own
       }
       const forwarded = Reflect.getOwnPropertyDescriptor(read(), property)
-      /** A proxy may only report a property its target lacks as configurable. */
-      return forwarded === undefined ? undefined : { ...forwarded, configurable: true }
+      if (forwarded === undefined) {
+        return undefined
+      }
+      /**
+       * A proxy may only report a property its target lacks as configurable. A method reports the
+       * same forwarder `get` returns: the service below a decorator reports its own undecorated
+       * method, and a plugin that copies methods by descriptor would otherwise skip this layer.
+       */
+      return 'value' in forwarded && typeof forwarded.value === 'function'
+        ? { ...forwarded, configurable: true, value: forwarderFor(property) }
+        : { ...forwarded, configurable: true }
     },
     getPrototypeOf: () => Reflect.getPrototypeOf(read()),
     has: (target, property) => Reflect.has(target, property) || Reflect.has(read(), property),

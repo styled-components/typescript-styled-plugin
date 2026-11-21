@@ -369,6 +369,7 @@ describe('TsServerStyledPlugin', () => {
   it.each([
     ['its own earlier decoration', (service: ts.LanguageService) => service],
     ['another plugin wrapping its earlier decoration', wrapLikeAnotherPlugin],
+    ['another plugin copying its earlier decoration by descriptor', copyByDescriptor],
   ])('should report each CSS diagnostic once when a reload passes in %s', (_name, wrap) => {
     const fileName = '/main.ts'
     const source = 'const a = styled.div`boarder: 0;`'
@@ -386,12 +387,14 @@ describe('TsServerStyledPlugin', () => {
       },
     ]
     const first = createPlugin({ typescript: ts }).create(info)
-    /** The positive control: the first load reports the diagnostic. */
+    const wrapped = wrap(first)
+    /** The positive control: the first load reports the diagnostic, also through the wrapper. */
     assert.deepEqual(pluginDiagnostics(first), expected)
+    assert.deepEqual(pluginDiagnostics(wrapped), expected)
 
     const reloaded = createPlugin({ typescript: ts }).create({
       ...info,
-      languageService: wrap(first),
+      languageService: wrapped,
     })
 
     assert.deepEqual(pluginDiagnostics(reloaded), expected)
@@ -633,6 +636,13 @@ function wrapLikeAnotherPlugin(service: ts.LanguageService): ts.LanguageService 
   for (const [name, value] of Object.entries(service)) {
     layer[name] = typeof value === 'function' ? value.bind(service) : value
   }
+  return layer as unknown as ts.LanguageService
+}
+
+/** Another plugin's layer that copies the service it wraps property by property, descriptors included. */
+function copyByDescriptor(service: ts.LanguageService): ts.LanguageService {
+  const layer: Record<string, unknown> = {}
+  Object.defineProperties(layer, Object.getOwnPropertyDescriptors(service))
   return layer as unknown as ts.LanguageService
 }
 
