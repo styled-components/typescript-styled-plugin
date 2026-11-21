@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.2.0
+
+### Minor Changes
+
+- 5358f4c: Add an editor configuration protocol so editor integrations can append tagged-template names without replacing project tags, validation, lint, or Emmet settings.
+
+  Open files update their diagnostics as soon as editor settings change, without an edit.
+
+  Thanks usercao!
+
+### Patch Changes
+
+- 62c87c5: Misspelled properties inside keyframe blocks, such as `opacitty` in `0% { opacitty: 0; }`, now report an unknown-property warning with a rename fix when a close match exists, both in a `keyframes` template and in an `@keyframes` rule nested in any other styled template.
+
 ## 1.1.1
 
 ### Patch Changes
