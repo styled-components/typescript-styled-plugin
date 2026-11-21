@@ -439,6 +439,173 @@ describe.concurrent('Plugin lifecycle', () => {
     )
   })
 
+  it('should report diagnostics, code fixes, and outlining spans once after project reloads', async (context) => {
+    const server = startServer(context)
+    const source = mark(
+      ['const q = css`', '⟨rule⟩a {', '⟨/rule⟩⟨property⟩boarder⟨/property⟩: 0;', '}', '`'].join(
+        '\n',
+      ),
+    )
+    const file = server.open(source.text)
+    const property = source.range('property')
+    const results = async () => ({
+      diagnostics: spansAndText(
+        pluginDiagnostics(await server.request('semanticDiagnosticsSync', { file })),
+      ),
+      fixes: bodyOf(
+        await server.request('getCodeFixes', {
+          endLine: property.end.line,
+          endOffset: property.end.offset,
+          errorCodes: [pluginDiagnosticCode],
+          file,
+          startLine: property.start.line,
+          startOffset: property.start.offset,
+        }),
+      ).map(({ description }) => description),
+      /** TypeScript contributes the first span, for the multiline template literal itself. */
+      outlining: bodyOf(await server.request('getOutliningSpans', { file }))
+        .slice(1)
+        .map(({ textSpan }) => textSpan),
+    })
+    const expected = {
+      diagnostics: [{ ...property, text: "Unknown property: 'boarder'" }],
+      /** vscode-css-languageservice ranks these three by similarity to "boarder". */
+      fixes: ["Rename to 'border'", "Rename to 'border-top'", "Rename to 'border-left'"],
+      outlining: [source.range('rule')],
+    }
+
+    const loaded = await results()
+    server.notify('reloadProjects', undefined)
+    const reloadedOnce = await results()
+    server.notify('reloadProjects', undefined)
+    const reloadedTwice = await results()
+
+    /** The first load is the positive control for the reloaded results. */
+    assert.deepEqual(loaded, expected)
+    assert.deepEqual(reloadedOnce, expected)
+    assert.deepEqual(reloadedTwice, expected)
+  })
+
+  it('should report each entry once after reloads when an aliased entry and a global plugin share a project', async (context) => {
+    const directory = mkdtempSync(path.join(tmpdir(), 'styled-alias-global-'))
+    context.onTestFinished(() => rmSync(directory, { force: true, recursive: true }))
+    mkdirSync(path.join(directory, 'node_modules'))
+    symlinkSync(repositoryRoot, path.join(directory, 'node_modules', 'styled-alias'), 'dir')
+    writeFileSync(
+      path.join(directory, 'tsconfig.json'),
+      JSON.stringify({
+        compilerOptions: { plugins: [{ name: 'styled-alias', tags: ['myCss'] }] },
+        files: ['main.ts'],
+      }),
+    )
+    const server = startServer(context, { globalPlugins: true, pluginProbeLocations: [directory] })
+    /** `myCss` is the aliased entry's own tag; `styled` is one of the global entry's default tags. */
+    const source = mark(
+      'const a = myCss`⟨alias⟩boarder⟨/alias⟩: 0;`; const b = styled.div`⟨global⟩boarder⟨/global⟩: 0;`',
+    )
+    const file = path.join(directory, 'main.ts')
+    /** On disk too: a reload on TypeScript 5.0 rereads the tsconfig `files` from disk. */
+    writeFileSync(file, source.text)
+    server.notify('open', { file, fileContent: source.text })
+    const diagnose = async () =>
+      spansAndText(pluginDiagnostics(await server.request('semanticDiagnosticsSync', { file })))
+    const expected = ['alias', 'global'].map((name) => ({
+      ...source.range(name),
+      text: "Unknown property: 'boarder'",
+    }))
+
+    const loaded = await diagnose()
+    server.notify('reloadProjects', undefined)
+    const reloadedOnce = await diagnose()
+    server.notify('reloadProjects', undefined)
+    const reloadedTwice = await diagnose()
+
+    /** The first load is the positive control: both entries are active. */
+    assert.deepEqual(loaded, expected)
+    assert.deepEqual(reloadedOnce, expected)
+    assert.deepEqual(reloadedTwice, expected)
+  })
+
+  it('should keep two same-named entries active across reloads', async (context) => {
+    const directory = mkdtempSync(path.join(tmpdir(), 'styled-same-name-'))
+    context.onTestFinished(() => rmSync(directory, { force: true, recursive: true }))
+    writeFileSync(
+      path.join(directory, 'tsconfig.json'),
+      JSON.stringify({
+        compilerOptions: {
+          plugins: ['firstTag', 'secondTag'].map((tag) => ({
+            name: pluginPackageName,
+            tags: [tag],
+          })),
+        },
+        files: ['main.ts'],
+      }),
+    )
+    const server = startServer(context)
+    const source = mark(
+      'const a = firstTag`⟨first⟩boarder⟨/first⟩: 0;`; const b = secondTag`⟨second⟩boarder⟨/second⟩: 0;`',
+    )
+    const file = path.join(directory, 'main.ts')
+    /** On disk too: a reload on TypeScript 5.0 rereads the tsconfig `files` from disk. */
+    writeFileSync(file, source.text)
+    server.notify('open', { file, fileContent: source.text })
+    const diagnose = async () =>
+      spansAndText(pluginDiagnostics(await server.request('semanticDiagnosticsSync', { file })))
+    const expected = ['first', 'second'].map((name) => ({
+      ...source.range(name),
+      text: "Unknown property: 'boarder'",
+    }))
+
+    const loaded = await diagnose()
+    server.notify('reloadProjects', undefined)
+    const reloadedOnce = await diagnose()
+    server.notify('reloadProjects', undefined)
+    const reloadedTwice = await diagnose()
+
+    assert.deepEqual(loaded, expected)
+    assert.deepEqual(reloadedOnce, expected)
+    assert.deepEqual(reloadedTwice, expected)
+  })
+
+  it('should report the remaining entry once after a reload removes a same-named entry', async (context) => {
+    const directory = mkdtempSync(path.join(tmpdir(), 'styled-removed-entry-'))
+    context.onTestFinished(() => rmSync(directory, { force: true, recursive: true }))
+    const writeTsconfig = (tags: ReadonlyArray<string>) =>
+      writeFileSync(
+        path.join(directory, 'tsconfig.json'),
+        JSON.stringify({
+          compilerOptions: {
+            plugins: tags.map((tag) => ({ name: pluginPackageName, tags: [tag] })),
+          },
+          files: ['main.ts'],
+        }),
+      )
+    writeTsconfig(['firstTag', 'secondTag'])
+    const server = startServer(context)
+    const source = mark(
+      'const a = firstTag`⟨first⟩boarder⟨/first⟩: 0;`; const b = secondTag`⟨second⟩boarder⟨/second⟩: 0;`',
+    )
+    const file = path.join(directory, 'main.ts')
+    /** On disk too: a reload on TypeScript 5.0 rereads the tsconfig `files` from disk. */
+    writeFileSync(file, source.text)
+    server.notify('open', { file, fileContent: source.text })
+    const diagnose = async () =>
+      spansAndText(pluginDiagnostics(await server.request('semanticDiagnosticsSync', { file })))
+    const diagnostic = (name: string) => ({
+      ...source.range(name),
+      text: "Unknown property: 'boarder'",
+    })
+
+    const loaded = await diagnose()
+    writeTsconfig(['secondTag'])
+    server.notify('reloadProjects', undefined)
+    const reloaded = await diagnose()
+
+    /** The first load is the positive control: both entries are active. */
+    assert.deepEqual(loaded, [diagnostic('first'), diagnostic('second')])
+    assert.deepEqual(reloaded, [diagnostic('second')])
+  })
+
   it('should isolate project tags, validation, lint, and Emmet in one server', async (context) => {
     const server = startServer(context)
     const source = mark(

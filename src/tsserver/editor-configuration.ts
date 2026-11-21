@@ -16,7 +16,12 @@ interface ProjectDiagnostics {
 interface EditorConfigurationListener {
   applyEditorTags(extraTags: ReadonlyArray<string>): boolean
   applyLegacyConfiguration(config: unknown): boolean
+  /** The tsserver plugin entry that created the listener's language service: its name and position among same-named entries. */
+  readonly entryKey?: string
+  /** The keys of every entry the load that created the listener enables, when known. */
+  readonly entryKeys?: ReadonlySet<string>
   readonly project?: ProjectDiagnostics
+  supersede(): void
 }
 
 type EditorConfigurationParseResult =
@@ -37,18 +42,42 @@ export class EditorConfigurationManager {
   private state: DynamicConfigurationState = { kind: 'none' }
   private readonly listeners = new Set<EditorConfigurationListener>()
 
+  /**
+   * A project keeps one live listener per plugin entry: a project reload creates a new language
+   * service for the same project and entry, and the older one is superseded, as is one whose entry
+   * the reload no longer enables (docs/architecture.md, "Configuration"). Two entries naming this
+   * package are both active in one load, so neither supersedes the other.
+   */
   public addListener(listener: EditorConfigurationListener): void {
     const project = listener.project
-    if (project && !Array.from(this.listeners).some((entry) => entry.project === project)) {
-      const close = project.close
-      project.close = () => {
-        for (const entry of this.listeners) {
-          if (entry.project === project) {
-            this.listeners.delete(entry)
-          }
+    if (project) {
+      let hasProjectListener = false
+      for (const entry of this.listeners) {
+        if (entry.project !== project) {
+          continue
         }
-        project.close = close
-        close.call(project)
+        hasProjectListener = true
+        if (
+          entry.entryKey === listener.entryKey ||
+          (entry.entryKey !== undefined &&
+            listener.entryKeys !== undefined &&
+            !listener.entryKeys.has(entry.entryKey))
+        ) {
+          this.listeners.delete(entry)
+          entry.supersede()
+        }
+      }
+      if (!hasProjectListener) {
+        const close = project.close
+        project.close = () => {
+          for (const entry of this.listeners) {
+            if (entry.project === project) {
+              this.listeners.delete(entry)
+            }
+          }
+          project.close = close
+          close.call(project)
+        }
       }
     }
     this.listeners.add(listener)
@@ -145,10 +174,13 @@ export class ProjectConfigurationManager
   private legacyConfiguration: StyledPluginConfiguration | undefined
   private projectConfiguration: StyledPluginConfiguration
   private readonly projectUpdateListeners = new Set<() => void>()
+  private readonly supersededListeners = new Set<() => void>()
 
   public constructor(
     editorConfiguration: EditorConfigurationManager,
     public readonly project?: ProjectDiagnostics,
+    public readonly entryKey?: string,
+    public readonly entryKeys?: ReadonlySet<string>,
   ) {
     super()
     this.baseConfiguration = super.config
@@ -195,6 +227,16 @@ export class ProjectConfigurationManager
 
   public override onUpdatedConfig(listener: () => void): void {
     this.projectUpdateListeners.add(listener)
+  }
+
+  public onSuperseded(listener: () => void): void {
+    this.supersededListeners.add(listener)
+  }
+
+  public supersede(): void {
+    for (const listener of this.supersededListeners) {
+      listener()
+    }
   }
 
   public applyEditorTags(extraTags: ReadonlyArray<string>): boolean {

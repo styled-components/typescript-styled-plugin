@@ -4,7 +4,7 @@ import { assert, describe, it } from 'vitest'
 import { PluginConfigurationManager } from '../../src/configuration/plugin-configuration'
 import createPlugin from '../../src/index'
 import { EditorConfigurationManager } from '../../src/tsserver/editor-configuration'
-import { pluginIdentity } from '../../src/tsserver/plugin-identity'
+import { pluginIdentity, pluginPackageName } from '../../src/tsserver/plugin-identity'
 import {
   isSupportedTypeScriptVersion,
   TsServerStyledPlugin,
@@ -365,7 +365,286 @@ describe('TsServerStyledPlugin', () => {
     assert.strictEqual(firstRefreshes, 1)
     assert.strictEqual(secondRefreshes, 1)
   })
+
+  it.each([
+    ['its own earlier decoration', (service: ts.LanguageService) => service],
+    ['another plugin wrapping its earlier decoration', wrapLikeAnotherPlugin],
+    ['another plugin copying its earlier decoration by descriptor', copyByDescriptor],
+  ])('should report each CSS diagnostic once when a reload passes in %s', (_name, wrap) => {
+    const fileName = '/main.ts'
+    const source = 'const a = styled.div`boarder: 0;`'
+    const info = createPluginCreateInfo([], { files: { [fileName]: source } })
+    const pluginDiagnostics = (service: ts.LanguageService) =>
+      service
+        .getSemanticDiagnostics(fileName)
+        .filter((diagnostic) => diagnostic.source === pluginIdentity)
+        .map(({ length, messageText, start }) => ({ length, messageText, start }))
+    const expected = [
+      {
+        length: 'boarder'.length,
+        messageText: "Unknown property: 'boarder'",
+        start: source.indexOf('boarder'),
+      },
+    ]
+    const first = createPlugin({ typescript: ts }).create(info)
+    const wrapped = wrap(first)
+    /** The positive control: the first load reports the diagnostic, also through the wrapper. */
+    assert.deepEqual(pluginDiagnostics(first), expected)
+    assert.deepEqual(pluginDiagnostics(wrapped), expected)
+
+    const reloaded = createPlugin({ typescript: ts }).create({
+      ...info,
+      languageService: wrapped,
+    })
+
+    assert.deepEqual(pluginDiagnostics(reloaded), expected)
+  })
+
+  it('should skip the decorator in a superseded layer that another plugin still wraps', () => {
+    const fileName = '/main.ts'
+    const info = createPluginCreateInfo([], {
+      files: { [fileName]: 'const a = styled.div`boarder: 0;`' },
+    })
+    /** The decorator reads the program through the project on every template walk. */
+    const projectLanguageService = info.project.getLanguageService
+    let walks = 0
+    info.project.getLanguageService = (...args) => {
+      walks++
+      return projectLanguageService(...args)
+    }
+    const first = createPlugin({ typescript: ts }).create(info)
+    first.getSemanticDiagnostics(fileName)
+    const singleLayerWalks = walks
+    const reloaded = createPlugin({ typescript: ts }).create({
+      ...info,
+      languageService: wrapLikeAnotherPlugin(first),
+    })
+    walks = 0
+
+    reloaded.getSemanticDiagnostics(fileName)
+
+    /** The positive control: one active layer walks the file. */
+    assert.isAbove(singleLayerWalks, 0)
+    assert.strictEqual(walks, singleLayerWalks)
+  })
+
+  it.each([
+    [
+      'assigns',
+      (service: ts.LanguageService, patch: ts.LanguageService['getSemanticDiagnostics']) => {
+        service.getSemanticDiagnostics = patch
+      },
+    ],
+    [
+      'defines',
+      (service: ts.LanguageService, patch: ts.LanguageService['getSemanticDiagnostics']) => {
+        /** By value alone, which on a plain service object only replaces the value. */
+        Object.defineProperty(service, 'getSemanticDiagnostics', { value: patch })
+      },
+    ],
+  ])(
+    'should keep a method another plugin %s on its earlier layer during a reload',
+    (_name, apply) => {
+      const fileName = '/main.ts'
+      const source = 'const a = styled.div`boarder: 0;`'
+      const info = createPluginCreateInfo([], { files: { [fileName]: source } })
+      const marker: ts.Diagnostic = {
+        category: ts.DiagnosticCategory.Message,
+        code: 1,
+        file: undefined,
+        length: 0,
+        messageText: 'patched',
+        start: 0,
+      }
+      const first = createPlugin({ typescript: ts }).create(info)
+      /** Patches methods onto the service it receives and returns that same object, as ts-graphql-plugin does. */
+      const getSemanticDiagnostics = first.getSemanticDiagnostics
+      apply(first, (name) => [...getSemanticDiagnostics(name), marker])
+
+      const reloaded = createPlugin({ typescript: ts }).create({ ...info, languageService: first })
+
+      assert.deepEqual(
+        reloaded
+          .getSemanticDiagnostics(fileName)
+          .filter(
+            ({ messageText, source }) => source === pluginIdentity || messageText === 'patched',
+          )
+          .map(({ messageText, start }) => ({ messageText, start })),
+        [
+          { messageText: 'patched', start: 0 },
+          { messageText: "Unknown property: 'boarder'", start: source.indexOf('boarder') },
+        ],
+      )
+    },
+  )
+
+  it('should keep both entries active when a project lists this plugin twice under one name', () => {
+    const fileName = '/main.ts'
+    const source = 'const a = firstTag`boarder: 0;`; const b = secondTag`boarder: 0;`'
+    const info = createPluginCreateInfo([], { files: { [fileName]: source } })
+    const entries = ['firstTag', 'secondTag'].map((tag) => ({
+      name: '@styled/typescript-styled-plugin',
+      tags: [tag],
+    }))
+    info.project.getCompilerOptions = () => ({ plugins: entries })
+    const first = createPlugin({ typescript: ts }).create({ ...info, config: entries[0] })
+    const second = createPlugin({ typescript: ts }).create({
+      ...info,
+      config: entries[1],
+      languageService: first,
+    })
+
+    assert.deepEqual(
+      second
+        .getSemanticDiagnostics(fileName)
+        .filter((diagnostic) => diagnostic.source === pluginIdentity)
+        .map(({ start }) => start),
+      [source.indexOf('boarder'), source.lastIndexOf('boarder')].sort((a, b) => a - b),
+    )
+  })
+
+  it('should retire an entry that a reload no longer enables', () => {
+    const fileName = '/main.ts'
+    const source = 'const a = firstTag`boarder: 0;`; const b = secondTag`boarder: 0;`'
+    const info = createPluginCreateInfo([], {
+      files: { [fileName]: source },
+      projectService: createProjectService([], []),
+    })
+    const pluginStarts = (service: ts.LanguageService) =>
+      service
+        .getSemanticDiagnostics(fileName)
+        .filter((diagnostic) => diagnostic.source === pluginIdentity)
+        .map(({ start }) => start)
+    const entries = ['firstTag', 'secondTag'].map((tag) => ({
+      name: pluginPackageName,
+      tags: [tag],
+    }))
+    info.project.getCompilerOptions = () => ({ plugins: entries })
+    const first = createPlugin({ typescript: ts }).create({ ...info, config: entries[0] })
+    const second = createPlugin({ typescript: ts }).create({
+      ...info,
+      config: entries[1],
+      languageService: first,
+    })
+    /** The positive control: both entries are active before the reload. */
+    assert.deepEqual(pluginStarts(second), [
+      source.indexOf('boarder'),
+      source.lastIndexOf('boarder'),
+    ])
+
+    const remaining = [entries[1]]
+    info.project.getCompilerOptions = () => ({ plugins: remaining })
+    const reloaded = createPlugin({ typescript: ts }).create({
+      ...info,
+      config: remaining[0],
+      languageService: second,
+    })
+
+    assert.deepEqual(pluginStarts(reloaded), [source.lastIndexOf('boarder')])
+  })
+
+  it('should keep the layer chain the same depth across repeated reloads of two entries', (context) => {
+    const fileName = '/main.ts'
+    const source = 'const a = myCss`boarder: 0;`'
+    const info = createPluginCreateInfo([], {
+      files: { [fileName]: source },
+      pluginName: 'styled-alias',
+      projectPluginConfiguration: { tags: ['myCss'] },
+      projectService: createProjectService([], [pluginPackageName]),
+    })
+    const stackTraceLimit = Error.stackTraceLimit
+    Error.stackTraceLimit = Infinity
+    context.onTestFinished(() => {
+      Error.stackTraceLimit = stackTraceLimit
+    })
+    /** The number of frames between a request and the project's own language service. */
+    let depth = 0
+    const base = info.languageService
+    const getSemanticDiagnostics = base.getSemanticDiagnostics
+    base.getSemanticDiagnostics = (name) => {
+      depth = new Error().stack?.split('\n').length ?? 0
+      return getSemanticDiagnostics(name)
+    }
+    /** One project load: the aliased tsconfig entry, then the global plugin tsserver enables after it. */
+    const load = (languageService: ts.LanguageService) => {
+      const aliased = createPlugin({ typescript: ts }).create({ ...info, languageService })
+      return createPlugin({ typescript: ts }).create({
+        ...info,
+        config: { global: true, name: pluginPackageName },
+        languageService: aliased,
+      })
+    }
+    const diagnoseAndMeasure = (service: ts.LanguageService) => {
+      const starts = service
+        .getSemanticDiagnostics(fileName)
+        .filter((diagnostic) => diagnostic.source === pluginIdentity)
+        .map(({ start }) => start)
+      return { depth, starts }
+    }
+
+    let service = load(base)
+    const loaded = diagnoseAndMeasure(service)
+    for (let reload = 0; reload < 5; reload++) {
+      service = load(service)
+    }
+
+    /** The positive control: the first load reports the aliased entry's diagnostic. */
+    assert.deepEqual(loaded.starts, [source.indexOf('boarder')])
+    assert.isAbove(loaded.depth, 0)
+    assert.deepEqual(diagnoseAndMeasure(service), loaded)
+  })
+
+  it('should keep an aliased project entry active when a global entry loads after it', () => {
+    const fileName = '/main.ts'
+    const source = 'const a = myCss`boarder: 0;`'
+    const projectService = createProjectService([])
+    const info = createPluginCreateInfo([], {
+      files: { [fileName]: source },
+      pluginName: 'styled-alias',
+      projectPluginConfiguration: { tags: ['myCss'] },
+      projectService,
+    })
+    const aliased = createPlugin({ typescript: ts }).create(info)
+    const global = createPlugin({ typescript: ts }).create({
+      ...info,
+      config: { global: true, name: '@styled/typescript-styled-plugin' },
+      languageService: aliased,
+    })
+
+    assert.deepEqual(
+      global
+        .getSemanticDiagnostics(fileName)
+        .filter((diagnostic) => diagnostic.source === pluginIdentity)
+        .map(({ length, messageText, start }) => ({ length, messageText, start })),
+      [
+        {
+          length: 'boarder'.length,
+          messageText: "Unknown property: 'boarder'",
+          start: source.indexOf('boarder'),
+        },
+      ],
+    )
+  })
 })
+
+/**
+ * Another plugin's layer, binding each method of the service it wraps once, at creation, as
+ * typescript-template-language-service-decorator does.
+ */
+function wrapLikeAnotherPlugin(service: ts.LanguageService): ts.LanguageService {
+  const layer: Record<string, unknown> = {}
+  for (const [name, value] of Object.entries(service)) {
+    layer[name] = typeof value === 'function' ? value.bind(service) : value
+  }
+  return layer as unknown as ts.LanguageService
+}
+
+/** Another plugin's layer that copies the service it wraps property by property, descriptors included. */
+function copyByDescriptor(service: ts.LanguageService): ts.LanguageService {
+  const layer: Record<string, unknown> = {}
+  Object.defineProperties(layer, Object.getOwnPropertyDescriptors(service))
+  return layer as unknown as ts.LanguageService
+}
 
 function createCycle(): Record<string, unknown> {
   const cycle: Record<string, unknown> = {}
@@ -375,19 +654,22 @@ function createCycle(): Record<string, unknown> {
 
 /**
  * The fields of PluginCreateInfo the plugin reads: its configuration, the host language service
- * it decorates, and the project service logger its log lines go to. A real tsserver Project needs a
+ * it decorates, the project's own language service the decorator reads each file's program from,
+ * and the project service logger its log lines go to. A real tsserver Project needs a
  * running server host, so the rest of the object is left out and the shape is asserted once here.
  */
 function createPluginCreateInfo(
   messages: string[],
   {
     config,
+    files = {},
     pluginName = '@styled/typescript-styled-plugin',
     projectPluginConfiguration,
     projectService,
     refreshDiagnostics,
   }: {
     config?: unknown
+    files?: Readonly<Record<string, string>>
     pluginName?: string
     projectPluginConfiguration?: Readonly<Record<string, unknown>>
     projectService?: ReturnType<typeof createProjectService>
@@ -395,14 +677,15 @@ function createPluginCreateInfo(
   } = {},
 ): ts.server.PluginCreateInfo {
   const host: ts.LanguageServiceHost = {
-    fileExists: () => false,
+    fileExists: (fileName) => fileName in files,
     getCompilationSettings: () => ({}),
     getCurrentDirectory: () => '/',
     getDefaultLibFileName: () => 'lib.d.ts',
-    getScriptFileNames: () => [],
-    getScriptSnapshot: () => undefined,
+    getScriptFileNames: () => Object.keys(files),
+    getScriptSnapshot: (fileName) =>
+      fileName in files ? ts.ScriptSnapshot.fromString(files[fileName]) : undefined,
     getScriptVersion: () => '0',
-    readFile: () => undefined,
+    readFile: (fileName) => files[fileName],
   }
   const projectPluginEntry = projectPluginConfiguration
     ? {
@@ -410,14 +693,16 @@ function createPluginCreateInfo(
         ...projectPluginConfiguration,
       }
     : undefined
+  const languageService = ts.createLanguageService(host)
   const pluginCreateInfo = {
     config: config ?? projectPluginEntry ?? {},
-    languageService: ts.createLanguageService(host),
+    languageService,
     project: {
       close() {},
       getCompilerOptions: () => ({
         plugins: projectPluginEntry ? [projectPluginEntry] : undefined,
       }),
+      getLanguageService: () => languageService,
       projectService: projectService ?? createProjectService(messages),
       refreshDiagnostics: refreshDiagnostics ?? (() => {}),
     },
@@ -425,8 +710,9 @@ function createPluginCreateInfo(
   return pluginCreateInfo as unknown as ts.server.PluginCreateInfo
 }
 
-function createProjectService(messages: string[]) {
+function createProjectService(messages: string[], globalPlugins?: ReadonlyArray<string>) {
   return {
+    globalPlugins,
     logger: {
       info(message: string) {
         messages.push(message)
