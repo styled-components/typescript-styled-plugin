@@ -1,6 +1,10 @@
 import { assert, describe, it } from 'vitest'
 
 import { PluginConfigurationManager } from '../../src/configuration/plugin-configuration'
+import {
+  EditorConfigurationManager,
+  ProjectConfigurationManager,
+} from '../../src/tsserver/editor-configuration'
 
 describe('PluginConfigurationManager', () => {
   it('should expose the complete default tag list', () => {
@@ -321,7 +325,430 @@ describe('PluginConfigurationManager', () => {
     assert.deepEqual(manager.config.emmet, { futureOption: true } as unknown)
     assert.deepEqual(logger.messages, [])
   })
+
+  it('should append normalized editor tags without changing the project configuration', () => {
+    const editorConfiguration = new EditorConfigurationManager()
+    const manager = new ProjectConfigurationManager(editorConfiguration)
+    manager.updateFromProjectConfig({
+      emmet: { showExpandedAbbreviation: 'never' },
+      lint: { unknownProperties: 'ignore' },
+      tags: ['css', 'projectTag'],
+      validate: false,
+    })
+
+    editorConfiguration.updateFromPluginConfig({
+      editorConfiguration: {
+        extraTags: [' globalStyle ', 'projectTag', '', 'globalStyle', 'styledNative'],
+      },
+    })
+
+    assert.deepEqual(manager.config, {
+      emmet: { showExpandedAbbreviation: 'never' },
+      lint: { emptyRules: 'ignore', unknownProperties: 'ignore' },
+      tags: ['css', 'projectTag', 'globalStyle', 'styledNative'],
+      validate: false,
+    })
+  })
+
+  it('should clear only editor tags when the overlay sends an empty list', () => {
+    const editorConfiguration = new EditorConfigurationManager()
+    const manager = new ProjectConfigurationManager(editorConfiguration)
+    manager.updateFromProjectConfig({ tags: ['projectTag'] })
+    editorConfiguration.updateFromPluginConfig(editorEnvelope(['editorTag']))
+
+    editorConfiguration.updateFromPluginConfig(editorEnvelope([]))
+
+    assert.deepEqual(manager.config.tags, ['projectTag'])
+  })
+
+  it.each([{ extraTags: [1, null, ' '] }, { extraTags: ['', '   '] }])(
+    'should preserve editor tags when a non-empty list has no valid entries',
+    ({ extraTags }) => {
+      const editorConfiguration = new EditorConfigurationManager()
+      const manager = new ProjectConfigurationManager(editorConfiguration)
+      manager.updateFromProjectConfig({ tags: ['projectTag'] })
+      editorConfiguration.updateFromPluginConfig({
+        editorConfiguration: { extraTags: ['editorTag'] },
+      })
+
+      editorConfiguration.updateFromPluginConfig({ editorConfiguration: { extraTags } })
+
+      assert.deepEqual(manager.config.tags, ['projectTag', 'editorTag'])
+    },
+  )
+
+  it('should accept editor tags without count or length limits', () => {
+    const editorConfiguration = new EditorConfigurationManager()
+    const manager = new ProjectConfigurationManager(editorConfiguration)
+    const extraTags = [
+      ...Array.from({ length: 65 }, (_, index) => `tag-${index}`),
+      'x'.repeat(4_097),
+    ]
+
+    editorConfiguration.updateFromPluginConfig({ editorConfiguration: { extraTags } })
+
+    assert.deepEqual(manager.config.tags.slice(-extraTags.length), extraTags)
+  })
+
+  it('should clear editor tags for a legacy runtime replacement', () => {
+    const editorConfiguration = new EditorConfigurationManager()
+    const manager = new ProjectConfigurationManager(editorConfiguration)
+    manager.updateFromProjectConfig({ tags: ['projectTag'] })
+    editorConfiguration.updateFromPluginConfig(editorEnvelope(['editorTag']))
+
+    const legacy = new PluginConfigurationManager()
+    legacy.updateFromPluginConfig({ tags: ['runtimeTag'], validate: false })
+    editorConfiguration.activateLegacy(legacy.config)
+
+    assert.deepEqual(manager.config.tags, ['runtimeTag'])
+    assert.strictEqual(manager.config.validate, false)
+  })
+
+  it('should broadcast a legacy snapshot to every surviving project manager', () => {
+    const editorConfiguration = new EditorConfigurationManager()
+    const first = new ProjectConfigurationManager(editorConfiguration)
+    const second = new ProjectConfigurationManager(editorConfiguration)
+    first.updateFromProjectConfig({ tags: ['firstTag'] })
+    second.updateFromProjectConfig({ tags: ['secondTag'], validate: false })
+    editorConfiguration.updateFromPluginConfig(editorEnvelope(['editorTag']))
+    const legacy = new PluginConfigurationManager()
+    legacy.updateFromPluginConfig({ tags: ['runtimeTag'], validate: false })
+
+    editorConfiguration.activateLegacy(legacy.config)
+
+    assert.deepEqual(first.config, legacy.config)
+    assert.deepEqual(second.config, legacy.config)
+
+    editorConfiguration.updateFromPluginConfig(editorEnvelope([]))
+    assert.deepEqual(first.config.tags, ['firstTag'])
+    assert.isTrue(first.config.validate)
+    assert.deepEqual(second.config.tags, ['secondTag'])
+    assert.isFalse(second.config.validate)
+  })
+
+  it('should broadcast equivalent legacy snapshots only once across project callbacks', () => {
+    const editorConfiguration = new EditorConfigurationManager()
+    const updates = [0, 0, 0]
+    const managers = updates.map((_, index) => {
+      const manager = new ProjectConfigurationManager(editorConfiguration)
+      manager.onUpdatedConfig(() => updates[index]++)
+      return manager
+    })
+    const send = (input: unknown) => {
+      for (const _manager of managers) {
+        const normalized = new PluginConfigurationManager()
+        normalized.updateFromPluginConfig(input)
+        editorConfiguration.activateLegacy(normalized.config)
+      }
+    }
+
+    send({ emmet: { preferences: { compact: true } }, tags: ['runtimeTag'] })
+    assert.deepEqual(updates, [1, 1, 1])
+
+    send({ emmet: { preferences: { compact: false } }, tags: ['runtimeTag'] })
+    assert.deepEqual(updates, [2, 2, 2])
+    for (const manager of managers) {
+      assert.deepEqual(manager.config.emmet, { preferences: { compact: false } })
+    }
+  })
+
+  it.each(['editor', 'legacy'])(
+    'should update every manager before refreshing the project service for %s configuration',
+    (kind) => {
+      const editorConfiguration = new EditorConfigurationManager()
+      const logger = createLogger()
+      const refreshes = [0, 0]
+      const updates = [0, 0, 0]
+      const updatesAtRefresh: number[][] = []
+      const firstProject = {
+        close() {},
+        refreshDiagnostics() {
+          updatesAtRefresh.push([...updates])
+          refreshes[0]++
+        },
+      }
+      const secondProject = {
+        close() {},
+        refreshDiagnostics() {
+          updatesAtRefresh.push([...updates])
+          refreshes[1]++
+        },
+      }
+      const managers = [firstProject, firstProject, secondProject].map((project, index) => {
+        const manager = new ProjectConfigurationManager(editorConfiguration, project)
+        manager.updateFromProjectConfig({ tags: ['baseTag'] })
+        manager.onUpdatedConfig(() => updates[index]++)
+        return manager
+      })
+
+      if (kind === 'editor') {
+        editorConfiguration.updateFromPluginConfig(editorEnvelope(['extraTag']), logger)
+      } else {
+        const legacy = new PluginConfigurationManager()
+        legacy.updateFromPluginConfig({ tags: ['extraTag'] })
+        editorConfiguration.activateLegacy(legacy.config, logger)
+      }
+
+      assert.deepEqual(updates, [1, 1, 1])
+      assert.deepEqual(refreshes, [1, 0])
+      assert.deepEqual(updatesAtRefresh, [[1, 1, 1]])
+      for (const manager of managers) {
+        assert.deepEqual(
+          manager.config.tags,
+          kind === 'editor' ? ['baseTag', 'extraTag'] : ['extraTag'],
+        )
+      }
+    },
+  )
+
+  it.each(['editor', 'legacy'])(
+    'should remove all managers when a project closes before a %s update',
+    (kind) => {
+      const editorConfiguration = new EditorConfigurationManager()
+      const refreshes = [0, 0]
+      const updates = [0, 0, 0]
+      const firstProject = {
+        closed: false,
+        close() {
+          this.closed = true
+        },
+        refreshDiagnostics() {
+          refreshes[0]++
+        },
+      }
+      const secondProject = {
+        close() {},
+        refreshDiagnostics() {
+          refreshes[1]++
+        },
+      }
+      const managers = [firstProject, firstProject, secondProject].map((project, index) => {
+        const manager = new ProjectConfigurationManager(editorConfiguration, project)
+        manager.updateFromProjectConfig({ tags: ['baseTag'] })
+        manager.onUpdatedConfig(() => updates[index]++)
+        return manager
+      })
+      editorConfiguration.updateFromPluginConfig(editorEnvelope(['initialTag']))
+      assert.deepEqual(updates, [1, 1, 1])
+      assert.deepEqual(refreshes, [1, 0])
+
+      firstProject.close()
+      assert.isTrue(firstProject.closed)
+      if (kind === 'editor') {
+        editorConfiguration.updateFromPluginConfig(editorEnvelope(['nextTag']))
+      } else {
+        const legacy = new PluginConfigurationManager()
+        legacy.updateFromPluginConfig({ tags: ['nextTag'] })
+        editorConfiguration.activateLegacy(legacy.config)
+      }
+
+      assert.deepEqual(updates, [1, 1, 2])
+      assert.deepEqual(refreshes, [1, 1])
+      assert.deepEqual(managers[0].config.tags, ['baseTag', 'initialTag'])
+      assert.deepEqual(managers[1].config.tags, ['baseTag', 'initialTag'])
+      const expectedTags = kind === 'editor' ? ['baseTag', 'nextTag'] : ['nextTag']
+      assert.deepEqual(managers[2].config.tags, expectedTags)
+
+      secondProject.close()
+      editorConfiguration.updateFromPluginConfig(editorEnvelope(['reopenedTag']))
+      assert.deepEqual(updates, [1, 1, 2])
+      assert.deepEqual(refreshes, [1, 1])
+      const reopened = new ProjectConfigurationManager(editorConfiguration, firstProject)
+      reopened.updateFromProjectConfig({ tags: ['baseTag'] })
+      assert.deepEqual(reopened.config.tags, ['baseTag', 'reopenedTag'])
+      firstProject.close()
+      editorConfiguration.updateFromPluginConfig(editorEnvelope([]))
+      assert.deepEqual(reopened.config.tags, ['baseTag', 'reopenedTag'])
+      assert.deepEqual(refreshes, [1, 1])
+    },
+  )
+
+  it.each(['editor', 'legacy'])(
+    'should continue applying %s configuration after one manager fails',
+    (kind) => {
+      const editorConfiguration = new EditorConfigurationManager()
+      const logger = createLogger()
+      const first = new ProjectConfigurationManager(editorConfiguration)
+      const second = new ProjectConfigurationManager(editorConfiguration)
+      first.onUpdatedConfig(() => {
+        throw new Error('configuration listener failed')
+      })
+
+      if (kind === 'editor') {
+        editorConfiguration.updateFromPluginConfig(editorEnvelope(['nextTag']), logger)
+      } else {
+        const legacy = new PluginConfigurationManager()
+        legacy.updateFromPluginConfig({ tags: ['nextTag'] })
+        editorConfiguration.activateLegacy(legacy.config, logger)
+      }
+
+      assert.deepEqual(
+        second.config.tags,
+        kind === 'editor'
+          ? [...new PluginConfigurationManager().config.tags, 'nextTag']
+          : ['nextTag'],
+      )
+      assert.include(logger.messages, `Failed to apply ${kind} configuration to one project.`)
+    },
+  )
+
+  it('should restore the project base when an editor overlay follows a legacy replacement', () => {
+    const editorConfiguration = new EditorConfigurationManager()
+    const manager = new ProjectConfigurationManager(editorConfiguration)
+    manager.updateFromProjectConfig({ tags: ['projectTag'], validate: false })
+    const legacy = new PluginConfigurationManager()
+    legacy.updateFromPluginConfig({ tags: ['runtimeTag'], validate: true })
+    editorConfiguration.activateLegacy(legacy.config)
+
+    editorConfiguration.updateFromPluginConfig(editorEnvelope(['editorTag']))
+
+    assert.deepEqual(manager.config.tags, ['projectTag', 'editorTag'])
+    assert.strictEqual(manager.config.validate, false)
+  })
+
+  it('should restore the project base when an empty editor overlay follows a legacy replacement', () => {
+    const editorConfiguration = new EditorConfigurationManager()
+    const manager = new ProjectConfigurationManager(editorConfiguration)
+    manager.updateFromProjectConfig({ tags: ['projectTag'], validate: false })
+    const legacy = new PluginConfigurationManager()
+    legacy.updateFromPluginConfig({ tags: ['runtimeTag'], validate: true })
+    editorConfiguration.activateLegacy(legacy.config)
+
+    editorConfiguration.updateFromPluginConfig(editorEnvelope([]))
+
+    assert.deepEqual(manager.config.tags, ['projectTag'])
+    assert.strictEqual(manager.config.validate, false)
+  })
+
+  it('should notify once when switching from an editor overlay to a legacy replacement', () => {
+    const editorConfiguration = new EditorConfigurationManager()
+    const manager = new ProjectConfigurationManager(editorConfiguration)
+    manager.updateFromProjectConfig({ tags: ['projectTag'] })
+    editorConfiguration.updateFromPluginConfig(editorEnvelope(['editorTag']))
+    let updates = 0
+    manager.onUpdatedConfig(() => updates++)
+
+    const legacy = new PluginConfigurationManager()
+    legacy.updateFromPluginConfig({ tags: ['runtimeTag'] })
+    editorConfiguration.activateLegacy(legacy.config)
+
+    assert.strictEqual(updates, 1)
+    assert.deepEqual(manager.config.tags, ['runtimeTag'])
+  })
+
+  it('should not notify for the same normalized editor tags', () => {
+    const editorConfiguration = new EditorConfigurationManager()
+    const manager = new ProjectConfigurationManager(editorConfiguration)
+    let updates = 0
+    manager.onUpdatedConfig(() => updates++)
+
+    editorConfiguration.updateFromPluginConfig(editorEnvelope([' editorTag ', 'editorTag']))
+    editorConfiguration.updateFromPluginConfig(editorEnvelope(['editorTag']))
+
+    assert.strictEqual(updates, 1)
+  })
+
+  it.each([{ extraTags: [] }, { extraTags: ['projectTag'] }])(
+    'should not notify when the first overlay leaves the effective configuration unchanged: $extraTags',
+    ({ extraTags }) => {
+      const editorConfiguration = new EditorConfigurationManager()
+      const manager = new ProjectConfigurationManager(editorConfiguration)
+      manager.updateFromProjectConfig({ tags: ['projectTag'], validate: false })
+      const initialConfiguration = manager.config
+      let updates = 0
+      manager.onUpdatedConfig(() => updates++)
+
+      editorConfiguration.updateFromPluginConfig(editorEnvelope(extraTags))
+
+      assert.strictEqual(updates, 0)
+      assert.strictEqual(manager.config, initialConfiguration)
+
+      editorConfiguration.updateFromPluginConfig(editorEnvelope(['editorTag']))
+      assert.strictEqual(updates, 1)
+      assert.deepEqual(manager.config.tags, ['projectTag', 'editorTag'])
+      assert.isFalse(manager.config.validate)
+    },
+  )
+
+  it('should preserve the last valid editor tags for a non-array tag value', () => {
+    const editorConfiguration = new EditorConfigurationManager()
+    const manager = new ProjectConfigurationManager(editorConfiguration)
+    const logger = createLogger()
+    editorConfiguration.updateFromPluginConfig(editorEnvelope(['editorTag']))
+
+    editorConfiguration.updateFromPluginConfig(editorEnvelope('replacement'), logger)
+
+    assert.deepEqual(manager.config.tags.slice(-1), ['editorTag'])
+    assert.strictEqual(logger.messages.length, 1)
+  })
+
+  it('should discard non-string editor tag entries and report one summary', () => {
+    const editorConfiguration = new EditorConfigurationManager()
+    const manager = new ProjectConfigurationManager(editorConfiguration)
+    const logger = createLogger()
+
+    editorConfiguration.updateFromPluginConfig(editorEnvelope(['editorTag', 1, null]), logger)
+
+    assert.deepEqual(manager.config.tags.slice(-1), ['editorTag'])
+    assert.deepEqual(logger.messages, [
+      'Ignored 2 non-string entries in editorConfiguration.extraTags.',
+      'Applied editor configuration: 1 additional tag.',
+    ])
+  })
+
+  it('should apply editor configuration even when the logger throws', () => {
+    const editorConfiguration = new EditorConfigurationManager()
+    const manager = new ProjectConfigurationManager(editorConfiguration)
+    const throwingLogger = {
+      log() {
+        throw new Error('log failed')
+      },
+    }
+
+    assert.doesNotThrow(() =>
+      editorConfiguration.updateFromPluginConfig(editorEnvelope(['editorTag', 1]), throwingLogger),
+    )
+    assert.deepEqual(manager.config.tags.slice(-1), ['editorTag'])
+  })
+
+  it('should reject an inherited extraTags field', () => {
+    const editorConfiguration = new EditorConfigurationManager()
+    const manager = new ProjectConfigurationManager(editorConfiguration)
+    editorConfiguration.updateFromPluginConfig(editorEnvelope(['editorTag']))
+    const inherited = Object.create({
+      extraTags: ['replacement'],
+    })
+
+    editorConfiguration.updateFromPluginConfig({ editorConfiguration: inherited })
+
+    assert.deepEqual(manager.config.tags.slice(-1), ['editorTag'])
+  })
+
+  it.each([
+    ['an array envelope', Object.assign([], { editorConfiguration: {} })],
+    [
+      'a class instance envelope',
+      new (class {
+        public readonly editorConfiguration = {}
+      })(),
+    ],
+  ])('should match but reject %s', (_description, config) => {
+    const editorConfiguration = new EditorConfigurationManager()
+    const manager = new ProjectConfigurationManager(editorConfiguration)
+    editorConfiguration.updateFromPluginConfig(editorEnvelope(['editorTag']))
+
+    assert.isTrue(editorConfiguration.updateFromPluginConfig(config).matched)
+    assert.deepEqual(manager.config.tags.slice(-1), ['editorTag'])
+  })
 })
+
+function editorEnvelope(extraTags: unknown): unknown {
+  return {
+    editorConfiguration: {
+      extraTags,
+    },
+  }
+}
 
 function createLogger() {
   const messages: string[] = []

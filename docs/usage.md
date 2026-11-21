@@ -255,9 +255,28 @@ then open it with the **TypeScript: Open TS Server log** command.
 ## Settings sent by the editor
 
 An editor or extension can send settings at runtime through tsserver's
-`configurePlugin` request. Each such request replaces the plugin settings from
-`tsconfig.json` as a whole rather than merging into them: a setting the
-request leaves out returns to its default, not to the `tsconfig.json` value.
+`configurePlugin` request. A normal request replaces the plugin settings from
+`tsconfig.json` as a whole rather than merging into them: a setting the request
+leaves out returns to its default, not to the `tsconfig.json` value.
+
+Editor integrations can instead send an editor configuration envelope. Its
+`extraTags` are appended to each project's configured tags without changing
+`validate`, `lint`, or `emmet`:
+
+```json
+{
+  "editorConfiguration": {
+    "extraTags": ["globalStyle"]
+  }
+}
+```
+
+This envelope is a general integration protocol for editor extensions, language
+server adapters, and other tsserver hosts, not a setting to copy into
+`tsconfig.json`, where it is ignored. Adapter authors should follow the
+[editor integration protocol](editor-integration.md) for version requirements,
+payload rules, and configuration replay; the plugin's handling of each payload
+kind is specified in [Architecture](architecture.md#configuration).
 
 ## Emmet completions
 

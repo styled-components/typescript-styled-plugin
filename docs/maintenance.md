@@ -329,6 +329,18 @@ without a process boundary. Add or update a tsserver scenario when the change
 affects plugin discovery, tsserver protocol behavior, source-file handling, or
 the interaction between the plugin and a real TypeScript host.
 
+Editor configuration protocol changes must cover both arrival orders in
+`test/e2e/scenarios/plugin-lifecycle.test.ts`: `configurePlugin` before the
+project opens, and after it opens. Keep a positive base-tag control beside any
+assertion that clearing or rejecting an overlay removes results. Public
+protocol type changes also run through `pnpm test:package-api:consumers` so the
+minimum and current TypeScript declarations are checked.
+
+When changing overlay normalization, project entry lookup, or the shared
+listener `Set`, run `test/unit/plugin-configuration.test.ts`,
+`test/unit/tsserver-plugin.test.ts`, and
+`test/e2e/scenarios/plugin-lifecycle.test.ts`.
+
 CI builds the package with the Node.js version in `.github/.node-version`, then
 verifies the resulting artifact on Node 22.12 and that version against the
 TypeScript versions listed in the e2e matrix

@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "module": "commonjs",
+    "noEmit": true,
+    "plugins": [
+      {
+        "emmet": { "showExpandedAbbreviation": "never" },
+        "lint": { "unknownProperties": "ignore" },
+        "name": "@styled/typescript-styled-plugin",
+        "tags": ["projectTag"],
+        "validate": false
+      }
+    ],
+    "strict": true,
+    "target": "ES2021"
+  }
+}
