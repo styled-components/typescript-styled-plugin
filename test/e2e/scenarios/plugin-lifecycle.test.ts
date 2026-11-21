@@ -526,6 +526,47 @@ describe.concurrent('Plugin lifecycle', () => {
     assert.deepEqual(reloadedTwice, expected)
   })
 
+  it('should keep two same-named entries active across reloads', async (context) => {
+    const directory = mkdtempSync(path.join(tmpdir(), 'styled-same-name-'))
+    context.onTestFinished(() => rmSync(directory, { force: true, recursive: true }))
+    writeFileSync(
+      path.join(directory, 'tsconfig.json'),
+      JSON.stringify({
+        compilerOptions: {
+          plugins: ['firstTag', 'secondTag'].map((tag) => ({
+            name: pluginPackageName,
+            tags: [tag],
+          })),
+        },
+        files: ['main.ts'],
+      }),
+    )
+    const server = startServer(context)
+    const source = mark(
+      'const a = firstTag`⟨first⟩boarder⟨/first⟩: 0;`; const b = secondTag`⟨second⟩boarder⟨/second⟩: 0;`',
+    )
+    const file = path.join(directory, 'main.ts')
+    /** On disk too: a reload on TypeScript 5.0 rereads the tsconfig `files` from disk. */
+    writeFileSync(file, source.text)
+    server.notify('open', { file, fileContent: source.text })
+    const diagnose = async () =>
+      spansAndText(pluginDiagnostics(await server.request('semanticDiagnosticsSync', { file })))
+    const expected = ['first', 'second'].map((name) => ({
+      ...source.range(name),
+      text: "Unknown property: 'boarder'",
+    }))
+
+    const loaded = await diagnose()
+    server.notify('reloadProjects', undefined)
+    const reloadedOnce = await diagnose()
+    server.notify('reloadProjects', undefined)
+    const reloadedTwice = await diagnose()
+
+    assert.deepEqual(loaded, expected)
+    assert.deepEqual(reloadedOnce, expected)
+    assert.deepEqual(reloadedTwice, expected)
+  })
+
   it('should isolate project tags, validation, lint, and Emmet in one server', async (context) => {
     const server = startServer(context)
     const source = mark(

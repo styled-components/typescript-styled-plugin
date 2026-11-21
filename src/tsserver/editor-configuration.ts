@@ -16,8 +16,8 @@ interface ProjectDiagnostics {
 interface EditorConfigurationListener {
   applyEditorTags(extraTags: ReadonlyArray<string>): boolean
   applyLegacyConfiguration(config: unknown): boolean
-  /** The `name` of the tsserver plugin entry that created the listener's language service. */
-  readonly pluginName?: string
+  /** The tsserver plugin entry that created the listener's language service: its name and position among same-named entries. */
+  readonly entryKey?: string
   readonly project?: ProjectDiagnostics
   supersede(): void
 }
@@ -41,10 +41,10 @@ export class EditorConfigurationManager {
   private readonly listeners = new Set<EditorConfigurationListener>()
 
   /**
-   * A project keeps one live listener per plugin entry name: a project reload creates a new
-   * language service for the same project and entry, and the older one is superseded
-   * (docs/architecture.md, "Configuration"). Two entries naming this package differently (an npm
-   * alias next to a global plugin) are both active in one load, so neither supersedes the other.
+   * A project keeps one live listener per plugin entry: a project reload creates a new language
+   * service for the same project and entry, and the older one is superseded (docs/architecture.md,
+   * "Configuration"). Two entries naming this package are both active in one load, so neither
+   * supersedes the other.
    */
   public addListener(listener: EditorConfigurationListener): void {
     const project = listener.project
@@ -55,7 +55,7 @@ export class EditorConfigurationManager {
           continue
         }
         hasProjectListener = true
-        if (entry.pluginName === listener.pluginName) {
+        if (entry.entryKey === listener.entryKey) {
           this.listeners.delete(entry)
           entry.supersede()
         }
@@ -172,7 +172,7 @@ export class ProjectConfigurationManager
   public constructor(
     editorConfiguration: EditorConfigurationManager,
     public readonly project?: ProjectDiagnostics,
-    public readonly pluginName?: string,
+    public readonly entryKey?: string,
   ) {
     super()
     this.baseConfiguration = super.config

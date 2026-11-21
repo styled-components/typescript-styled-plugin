@@ -18,8 +18,10 @@ import { pluginPackageName } from './plugin-identity.ts'
 import { TsServerLogger } from './tsserver-logger.ts'
 
 interface Decoration {
+  readonly entryKey: string | undefined
+  /** True once another plugin assigned a property on the layer, which unwrapping would discard. */
+  readonly isPatched: () => boolean
   readonly languageService: ts.LanguageService
-  readonly pluginName: string | undefined
 }
 
 /** Each language service this plugin returned, mapped to the one it decorates and the entry that asked. */
@@ -50,11 +52,11 @@ export class TsServerStyledPlugin {
     const editorUpdate = isRuntimeConfiguration
       ? editorConfiguration.updateFromPluginConfig(info.config, logger)
       : { changed: false, matched: false }
-    const pluginName = readPluginName(info.config)
+    const entryKey = readEntryKey(info.config, info.project.getCompilerOptions().plugins)
     const configurationManager = new ProjectConfigurationManager(
       editorConfiguration,
       info.project,
-      pluginName,
+      entryKey,
     )
     configurationManager.updateFromProjectConfig(projectConfiguration, logger)
     if (
@@ -90,7 +92,7 @@ export class TsServerStyledPlugin {
     /** A project reload passes the same entry's earlier decoration back in (docs/architecture.md, "Request flow"). */
     const previous = decorations.get(info.languageService)
     const languageService =
-      previous !== undefined && previous.pluginName === pluginName
+      previous !== undefined && previous.entryKey === entryKey && !previous.isPatched()
         ? previous.languageService
         : info.languageService
     /**
@@ -112,8 +114,17 @@ export class TsServerStyledPlugin {
       active = languageService
     })
     const forwarders = new Map<PropertyKey, (...args: unknown[]) => unknown>()
+    /**
+     * Properties another plugin assigns on this layer (ts-graphql-plugin patches the service it
+     * receives and returns the same object). Kept here rather than written through to the wrapped
+     * service, where a retired layer forwarding to that service would call its own patch again.
+     */
+    const patches = new Map<PropertyKey, unknown>()
     const layer = new Proxy(languageService, {
       get: (_target, property) => {
+        if (patches.has(property)) {
+          return patches.get(property)
+        }
         const value: unknown = Reflect.get(active, property)
         if (typeof value !== 'function') {
           return value
@@ -125,8 +136,12 @@ export class TsServerStyledPlugin {
         }
         return forwarder
       },
+      set: (_target, property, value) => {
+        patches.set(property, value)
+        return true
+      },
     })
-    decorations.set(layer, { languageService, pluginName })
+    decorations.set(layer, { entryKey, isPatched: () => patches.size > 0, languageService })
     return layer
   }
 
@@ -172,6 +187,23 @@ function readProjectPluginConfiguration(info: ts.server.PluginCreateInfo): unkno
 
 function readPluginName(config: unknown): string | undefined {
   return isRecord(config) && typeof config.name === 'string' ? config.name : undefined
+}
+
+/**
+ * The entry's name and its position among the project entries of that name: tsserver enables
+ * every `plugins[]` entry, so two entries naming this package are both active in one load, while a
+ * reload reaches each at the same position. A global entry or a pre-project override is not one of
+ * the project's entry objects and counts as the first.
+ */
+function readEntryKey(config: unknown, plugins: unknown): string | undefined {
+  const name = readPluginName(config)
+  if (name === undefined) {
+    return undefined
+  }
+  const sameNamed = Array.isArray(plugins)
+    ? plugins.filter((entry) => isRecord(entry) && entry.name === name)
+    : []
+  return `${Math.max(sameNamed.indexOf(config), 0)}:${name}`
 }
 
 function isSameEntry(config: unknown, projectConfiguration: unknown): boolean {
