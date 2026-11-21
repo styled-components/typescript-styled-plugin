@@ -584,19 +584,19 @@ describe('PluginConfigurationManager', () => {
     const earlier = new ProjectConfigurationManager(editorConfiguration, project)
     earlier.updateFromProjectConfig({ tags: ['baseTag'] })
     let earlierUpdates = 0
+    let earlierSupersedes = 0
     earlier.onUpdatedConfig(() => earlierUpdates++)
+    earlier.onSuperseded(() => earlierSupersedes++)
 
     const newer = new ProjectConfigurationManager(editorConfiguration, project)
     newer.updateFromProjectConfig({ tags: ['baseTag'] })
-    /** Notified once, so its language service releases its caches. */
-    assert.strictEqual(earlierUpdates, 1)
-    assert.deepEqual(earlier.config.tags, [])
+    assert.strictEqual(earlierSupersedes, 1)
 
     editorConfiguration.updateFromPluginConfig(editorEnvelope(['extraTag']))
     assert.deepEqual(newer.config.tags, ['baseTag', 'extraTag'])
     assert.strictEqual(refreshes, 1)
-    assert.strictEqual(earlierUpdates, 1)
-    assert.deepEqual(earlier.config.tags, [])
+    assert.strictEqual(earlierUpdates, 0)
+    assert.deepEqual(earlier.config.tags, ['baseTag'])
 
     project.close()
     editorConfiguration.updateFromPluginConfig(editorEnvelope(['nextTag']))

@@ -167,6 +167,7 @@ export class ProjectConfigurationManager
   private legacyConfiguration: StyledPluginConfiguration | undefined
   private projectConfiguration: StyledPluginConfiguration
   private readonly projectUpdateListeners = new Set<() => void>()
+  private readonly supersededListeners = new Set<() => void>()
 
   public constructor(
     editorConfiguration: EditorConfigurationManager,
@@ -220,10 +221,14 @@ export class ProjectConfigurationManager
     this.projectUpdateListeners.add(listener)
   }
 
-  /** Matching no tag leaves a decorator that still holds this manager handling no template. */
+  public onSuperseded(listener: () => void): void {
+    this.supersededListeners.add(listener)
+  }
+
   public supersede(): void {
-    this.effectiveConfiguration = { ...this.effectiveConfiguration, tags: [] }
-    this.notifyUpdated()
+    for (const listener of this.supersededListeners) {
+      listener()
+    }
   }
 
   public applyEditorTags(extraTags: ReadonlyArray<string>): boolean {

@@ -93,7 +93,14 @@ export class TsServerStyledPlugin {
       previous !== undefined && previous.pluginName === pluginName
         ? previous.languageService
         : info.languageService
-    const decorated = decorateWithTemplateLanguageService(
+    /**
+     * The layer tsserver keeps. Once a newer layer for the same project and entry supersedes it,
+     * it forwards straight to the service it wraps, so a layer still in the chain neither runs the
+     * decorator nor keeps it alive (docs/architecture.md, "Request flow"). A layer above this one
+     * (the decorator included) binds each method once, when it wraps, so every method here is a
+     * stable function that picks the active service on each call.
+     */
+    let active: ts.LanguageService = decorateWithTemplateLanguageService(
       this.typescript,
       languageService,
       info.project,
@@ -101,8 +108,26 @@ export class TsServerStyledPlugin {
       getTemplateSettings(configurationManager),
       { logger },
     )
-    decorations.set(decorated, { languageService, pluginName })
-    return decorated
+    configurationManager.onSuperseded(() => {
+      active = languageService
+    })
+    const forwarders = new Map<PropertyKey, (...args: unknown[]) => unknown>()
+    const layer = new Proxy(languageService, {
+      get: (_target, property) => {
+        const value: unknown = Reflect.get(active, property)
+        if (typeof value !== 'function') {
+          return value
+        }
+        let forwarder = forwarders.get(property)
+        if (forwarder === undefined) {
+          forwarder = (...args) => Reflect.apply(Reflect.get(active, property), active, args)
+          forwarders.set(property, forwarder)
+        }
+        return forwarder
+      },
+    })
+    decorations.set(layer, { languageService, pluginName })
+    return layer
   }
 
   public onConfigurationChanged(config: unknown) {

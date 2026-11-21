@@ -486,6 +486,46 @@ describe.concurrent('Plugin lifecycle', () => {
     assert.deepEqual(reloadedTwice, expected)
   })
 
+  it('should report each entry once after reloads when an aliased entry and a global plugin share a project', async (context) => {
+    const directory = mkdtempSync(path.join(tmpdir(), 'styled-alias-global-'))
+    context.onTestFinished(() => rmSync(directory, { force: true, recursive: true }))
+    mkdirSync(path.join(directory, 'node_modules'))
+    symlinkSync(repositoryRoot, path.join(directory, 'node_modules', 'styled-alias'), 'dir')
+    writeFileSync(
+      path.join(directory, 'tsconfig.json'),
+      JSON.stringify({
+        compilerOptions: { plugins: [{ name: 'styled-alias', tags: ['myCss'] }] },
+        files: ['main.ts'],
+      }),
+    )
+    const server = startServer(context, { globalPlugins: true, pluginProbeLocations: [directory] })
+    /** `myCss` is the aliased entry's own tag; `styled` is one of the global entry's default tags. */
+    const source = mark(
+      'const a = myCss`⟨alias⟩boarder⟨/alias⟩: 0;`; const b = styled.div`⟨global⟩boarder⟨/global⟩: 0;`',
+    )
+    const file = path.join(directory, 'main.ts')
+    /** On disk too: a reload on TypeScript 5.0 rereads the tsconfig `files` from disk. */
+    writeFileSync(file, source.text)
+    server.notify('open', { file, fileContent: source.text })
+    const diagnose = async () =>
+      spansAndText(pluginDiagnostics(await server.request('semanticDiagnosticsSync', { file })))
+    const expected = ['alias', 'global'].map((name) => ({
+      ...source.range(name),
+      text: "Unknown property: 'boarder'",
+    }))
+
+    const loaded = await diagnose()
+    server.notify('reloadProjects', undefined)
+    const reloadedOnce = await diagnose()
+    server.notify('reloadProjects', undefined)
+    const reloadedTwice = await diagnose()
+
+    /** The first load is the positive control: both entries are active. */
+    assert.deepEqual(loaded, expected)
+    assert.deepEqual(reloadedOnce, expected)
+    assert.deepEqual(reloadedTwice, expected)
+  })
+
   it('should isolate project tags, validation, lint, and Emmet in one server', async (context) => {
     const server = startServer(context)
     const source = mark(

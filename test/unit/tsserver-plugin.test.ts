@@ -368,10 +368,7 @@ describe('TsServerStyledPlugin', () => {
 
   it.each([
     ['its own earlier decoration', (service: ts.LanguageService) => service],
-    [
-      'another plugin wrapping its earlier decoration',
-      (service: ts.LanguageService) => new Proxy(service, {}),
-    ],
+    ['another plugin wrapping its earlier decoration', wrapLikeAnotherPlugin],
   ])('should report each CSS diagnostic once when a reload passes in %s', (_name, wrap) => {
     const fileName = '/main.ts'
     const source = 'const a = styled.div`boarder: 0;`'
@@ -398,6 +395,34 @@ describe('TsServerStyledPlugin', () => {
     })
 
     assert.deepEqual(pluginDiagnostics(reloaded), expected)
+  })
+
+  it('should skip the decorator in a superseded layer that another plugin still wraps', () => {
+    const fileName = '/main.ts'
+    const info = createPluginCreateInfo([], {
+      files: { [fileName]: 'const a = styled.div`boarder: 0;`' },
+    })
+    /** The decorator reads the program through the project on every template walk. */
+    const projectLanguageService = info.project.getLanguageService
+    let walks = 0
+    info.project.getLanguageService = (...args) => {
+      walks++
+      return projectLanguageService(...args)
+    }
+    const first = createPlugin({ typescript: ts }).create(info)
+    first.getSemanticDiagnostics(fileName)
+    const singleLayerWalks = walks
+    const reloaded = createPlugin({ typescript: ts }).create({
+      ...info,
+      languageService: wrapLikeAnotherPlugin(first),
+    })
+    walks = 0
+
+    reloaded.getSemanticDiagnostics(fileName)
+
+    /** The positive control: one active layer walks the file. */
+    assert.isAbove(singleLayerWalks, 0)
+    assert.strictEqual(walks, singleLayerWalks)
   })
 
   it('should keep an aliased project entry active when a global entry loads after it', () => {
@@ -432,6 +457,18 @@ describe('TsServerStyledPlugin', () => {
     )
   })
 })
+
+/**
+ * Another plugin's layer, binding each method of the service it wraps once, at creation, as
+ * typescript-template-language-service-decorator does.
+ */
+function wrapLikeAnotherPlugin(service: ts.LanguageService): ts.LanguageService {
+  const layer: Record<string, unknown> = {}
+  for (const [name, value] of Object.entries(service)) {
+    layer[name] = typeof value === 'function' ? value.bind(service) : value
+  }
+  return layer as unknown as ts.LanguageService
+}
 
 function createCycle(): Record<string, unknown> {
   const cycle: Record<string, unknown> = {}
